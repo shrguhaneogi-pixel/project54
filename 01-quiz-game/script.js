@@ -1,178 +1,725 @@
-// DOM Elements
-const startScreen = document.getElementById("start-screen");
-const quizScreen = document.getElementById("quiz-screen");
-const resultScreen = document.getElementById("result-screen");
-const startButton = document.getElementById("start-btn");
-const questionText = document.getElementById("question-text");
-const answersContainer = document.getElementById("answers-container");
-const currentQuestionSpan = document.getElementById("current-question");
-const totalQuestionsSpan = document.getElementById("total-questions");
-const scoreSpan = document.getElementById("score");
-const finalScoreSpan = document.getElementById("final-score");
-const maxScoreSpan = document.getElementById("max-score");
-const resultMessage = document.getElementById("result-message");
-const restartButton = document.getElementById("restart-btn");
-const progressBar = document.getElementById("progress");
+/**
+ * QUIZ ZONE — script.js
+ * ─────────────────────────────────────────────
+ * Architecture:
+ *  1. QUESTION BANK  — categorized, difficulty-tagged data
+ *  2. STATE          — single source of truth object
+ *  3. CONFIG         — read from UI controls at quiz start
+ *  4. UTILITIES      — pure functions (shuffle, buildQuiz, calcPoints, sound)
+ *  5. SCREEN MANAGER — showScreen(id)
+ *  6. RENDER LAYER   — render* functions that read from state/DOM
+ *  7. GAME LOGIC     — startQuiz, showQuestion, handleAnswerClick, showResults
+ *  8. REVIEW SCREEN  — renderReviewScreen
+ *  9. EVENT WIRING   — all event listeners at bottom
+ */
 
-const quizQuestions = [
-  {
-    question: "What is the capital of France?",
-    answers: [
-      { text: "London", correct: false },
-      { text: "Berlin", correct: false },
-      { text: "Paris", correct: true },
-      { text: "Madrid", correct: false },
-    ],
-  },
-  {
-    question: "Which planet is known as the Red Planet?",
-    answers: [
-      { text: "Venus", correct: false },
-      { text: "Mars", correct: true },
-      { text: "Jupiter", correct: false },
-      { text: "Saturn", correct: false },
-    ],
-  },
-  {
-    question: "What is the largest ocean on Earth?",
-    answers: [
-      { text: "Atlantic Ocean", correct: false },
-      { text: "Indian Ocean", correct: false },
-      { text: "Arctic Ocean", correct: false },
-      { text: "Pacific Ocean", correct: true },
-    ],
-  },
-  {
-    question: "Which of these is NOT a programming language?",
-    answers: [
-      { text: "Java", correct: false },
-      { text: "Python", correct: false },
-      { text: "Banana", correct: true },
-      { text: "JavaScript", correct: false },
-    ],
-  },
-  {
-    question: "What is the chemical symbol for gold?",
-    answers: [
-      { text: "Go", correct: false },
-      { text: "Gd", correct: false },
-      { text: "Au", correct: true },
-      { text: "Ag", correct: false },
-    ],
-  },
-];
+"use strict";
 
-// QUIZ STATE VARS
-let currentQuestionIndex = 0;
-let score = 0;
-let answersDisabled = false;
+/* ─────────────────────────────────────────────
+   1. QUESTION BANK
+   ───────────────────────────────────────────── */
 
-totalQuestionsSpan.textContent = quizQuestions.length;
-maxScoreSpan.textContent = quizQuestions.length;
+/** @type {Record<string, Array<{question:string, answers:{text:string,correct:boolean}[], difficulty:'easy'|'medium'|'hard'}>>} */
+const questionBank = {
+  geography: [
+    { difficulty:"easy",   question:"What is the capital of France?",           answers:[{text:"London",correct:false},{text:"Berlin",correct:false},{text:"Paris",correct:true},{text:"Madrid",correct:false}] },
+    { difficulty:"easy",   question:"Which continent is Brazil in?",            answers:[{text:"Africa",correct:false},{text:"South America",correct:true},{text:"North America",correct:false},{text:"Europe",correct:false}] },
+    { difficulty:"easy",   question:"What is the largest ocean on Earth?",      answers:[{text:"Atlantic",correct:false},{text:"Indian",correct:false},{text:"Arctic",correct:false},{text:"Pacific",correct:true}] },
+    { difficulty:"medium", question:"What is the capital of Australia?",        answers:[{text:"Sydney",correct:false},{text:"Melbourne",correct:false},{text:"Canberra",correct:true},{text:"Brisbane",correct:false}] },
+    { difficulty:"medium", question:"Which country has the most natural lakes?",answers:[{text:"USA",correct:false},{text:"Russia",correct:false},{text:"Canada",correct:true},{text:"Brazil",correct:false}] },
+    { difficulty:"hard",   question:"What is the smallest country by area?",    answers:[{text:"Monaco",correct:false},{text:"San Marino",correct:false},{text:"Vatican City",correct:true},{text:"Liechtenstein",correct:false}] },
+  ],
+  science: [
+    { difficulty:"easy",   question:"Which planet is known as the Red Planet?", answers:[{text:"Venus",correct:false},{text:"Mars",correct:true},{text:"Jupiter",correct:false},{text:"Saturn",correct:false}] },
+    { difficulty:"easy",   question:"What is the chemical symbol for gold?",    answers:[{text:"Go",correct:false},{text:"Gd",correct:false},{text:"Au",correct:true},{text:"Ag",correct:false}] },
+    { difficulty:"easy",   question:"How many bones are in the adult human body?", answers:[{text:"196",correct:false},{text:"206",correct:true},{text:"216",correct:false},{text:"226",correct:false}] },
+    { difficulty:"medium", question:"What is the speed of light (approx)?",     answers:[{text:"200,000 km/s",correct:false},{text:"300,000 km/s",correct:true},{text:"400,000 km/s",correct:false},{text:"150,000 km/s",correct:false}] },
+    { difficulty:"medium", question:"What gas do plants absorb from the air?",  answers:[{text:"Oxygen",correct:false},{text:"Nitrogen",correct:false},{text:"Carbon Dioxide",correct:true},{text:"Hydrogen",correct:false}] },
+    { difficulty:"hard",   question:"What is the atomic number of Carbon?",     answers:[{text:"4",correct:false},{text:"6",correct:true},{text:"8",correct:false},{text:"12",correct:false}] },
+  ],
+  popCulture: [
+    { difficulty:"easy",   question:"Which of these is NOT a programming language?", answers:[{text:"Java",correct:false},{text:"Python",correct:false},{text:"Banana",correct:true},{text:"JavaScript",correct:false}] },
+    { difficulty:"easy",   question:"What is the best-selling video game of all time?", answers:[{text:"Tetris",correct:false},{text:"GTA V",correct:false},{text:"Minecraft",correct:true},{text:"Wii Sports",correct:false}] },
+    { difficulty:"easy",   question:"Which streaming service created Stranger Things?", answers:[{text:"HBO",correct:false},{text:"Netflix",correct:true},{text:"Disney+",correct:false},{text:"Amazon",correct:false}] },
+    { difficulty:"medium", question:"Who directed the movie 'Inception'?",      answers:[{text:"Ridley Scott",correct:false},{text:"J.J. Abrams",correct:false},{text:"Christopher Nolan",correct:true},{text:"Steven Spielberg",correct:false}] },
+    { difficulty:"medium", question:"What year was the first iPhone released?", answers:[{text:"2005",correct:false},{text:"2006",correct:false},{text:"2007",correct:true},{text:"2008",correct:false}] },
+    { difficulty:"hard",   question:"Who composed the 'Ode to Joy'?",           answers:[{text:"Mozart",correct:false},{text:"Bach",correct:false},{text:"Beethoven",correct:true},{text:"Chopin",correct:false}] },
+  ],
+  tech: [
+    { difficulty:"easy",   question:"What does 'HTML' stand for?",              answers:[{text:"Hyper Text Markup Language",correct:true},{text:"High Tech Modern Language",correct:false},{text:"Hyper Transfer Markup Logic",correct:false},{text:"Home Tool Markup Language",correct:false}] },
+    { difficulty:"easy",   question:"Which language runs natively in browsers?", answers:[{text:"Python",correct:false},{text:"Java",correct:false},{text:"JavaScript",correct:true},{text:"Ruby",correct:false}] },
+    { difficulty:"medium", question:"What does CSS stand for?",                 answers:[{text:"Computer Style Sheets",correct:false},{text:"Cascading Style Sheets",correct:true},{text:"Creative Styling System",correct:false},{text:"Code Style System",correct:false}] },
+    { difficulty:"medium", question:"Which data structure uses LIFO?",          answers:[{text:"Queue",correct:false},{text:"Stack",correct:true},{text:"Tree",correct:false},{text:"Graph",correct:false}] },
+    { difficulty:"hard",   question:"What is the time complexity of binary search?", answers:[{text:"O(n)",correct:false},{text:"O(n²)",correct:false},{text:"O(log n)",correct:true},{text:"O(1)",correct:false}] },
+    { difficulty:"hard",   question:"What does SQL stand for?",                 answers:[{text:"Structured Query Language",correct:true},{text:"Simple Question Language",correct:false},{text:"Stored Queue Logic",correct:false},{text:"Sequential Query Logic",correct:false}] },
+  ],
+};
 
-// event listeners
-startButton.addEventListener("click", startQuiz);
-restartButton.addEventListener("click", restartQuiz);
+/* Merge all categories for "all mix" option */
+const allQuestions = Object.values(questionBank).flat();
 
+
+/* ─────────────────────────────────────────────
+   2. STATE — single source of truth
+   ───────────────────────────────────────────── */
+
+const state = {
+  questions:      [],      // current quiz question array (built at start)
+  currentIndex:   0,       // current question index
+  score:          0,       // current raw score (includes multiplier)
+  streak:         0,       // consecutive correct answers
+  maxStreak:      0,       // peak streak this round
+  multiplier:     1,       // current combo multiplier
+  maxMultiplier:  1,       // peak multiplier this round
+  answersDisabled:false,   // lock answers after selection
+  timerInterval:  null,    // setInterval handle
+  timeLeft:       15,      // seconds remaining for current question
+  totalTimeLeft:  0,       // accumulated time left across answered questions
+  lifelineUsed:   false,   // 50/50 lifeline used this quiz
+  blindMode:      false,   // hide correct/wrong highlights
+  timerEnabled:   true,    // timer feature on/off
+  soundEnabled:   true,    // sound on/off
+  history:        [],      // [{question, selectedText, correctText, wasCorrect, timedOut}]
+  audioCtx:       null,    // lazy AudioContext
+};
+
+/** Update state safely */
+function setState(key, value) {
+  state[key] = value;
+}
+
+
+/* ─────────────────────────────────────────────
+   3. CONFIG — read from DOM controls
+   ───────────────────────────────────────────── */
+
+/** Read all start-screen controls and return a config object */
+function readConfig() {
+  return {
+    category:     document.getElementById("category-select").value,
+    difficulty:   document.getElementById("difficulty-select").value,
+    timerEnabled: document.getElementById("timer-toggle").checked,
+    blindMode:    document.getElementById("blind-toggle").checked,
+    soundEnabled: document.getElementById("sound-toggle").checked,
+  };
+}
+
+
+/* ─────────────────────────────────────────────
+   4. UTILITIES
+   ───────────────────────────────────────────── */
+
+/**
+ * Fisher-Yates shuffle — returns a NEW shuffled array, does not mutate source.
+ * @param {Array} arr
+ * @returns {Array}
+ */
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+/**
+ * Build a quiz from the pool based on difficulty preset.
+ * Also shuffles answers within each question.
+ * @param {Array} pool   — array of question objects
+ * @param {string} difficulty — 'all' | 'easy' | 'medium' | 'hard'
+ * @param {number} total  — total questions to pull (default 10)
+ * @returns {Array}
+ */
+function buildQuiz(pool, difficulty = "all", total = 10) {
+  const easy   = shuffle(pool.filter(q => q.difficulty === "easy"));
+  const medium = shuffle(pool.filter(q => q.difficulty === "medium"));
+  const hard   = shuffle(pool.filter(q => q.difficulty === "hard"));
+
+  let composed;
+
+  if (difficulty === "all") {
+    // Default distribution: 70% easy, 25% medium, 5% hard (rounded to nearest)
+    composed = [
+      ...easy.slice(0,   Math.round(total * 0.70)),
+      ...medium.slice(0, Math.round(total * 0.25)),
+      ...hard.slice(0,   Math.ceil(total  * 0.05)),
+    ];
+  } else if (difficulty === "easy") {
+    composed = [
+      ...easy.slice(0,   Math.round(total * 0.70)),
+      ...medium.slice(0, Math.round(total * 0.25)),
+      ...hard.slice(0,   Math.ceil(total  * 0.05)),
+    ];
+  } else if (difficulty === "medium") {
+    composed = [
+      ...easy.slice(0,   Math.round(total * 0.30)),
+      ...medium.slice(0, Math.round(total * 0.50)),
+      ...hard.slice(0,   Math.round(total * 0.20)),
+    ];
+  } else if (difficulty === "hard") {
+    composed = [
+      ...easy.slice(0,   Math.round(total * 0.10)),
+      ...medium.slice(0, Math.round(total * 0.30)),
+      ...hard.slice(0,   Math.round(total * 0.60)),
+    ];
+  }
+
+  // Clamp to `total`, shuffle the final order, then shuffle each question's answers
+  return shuffle(composed.slice(0, total)).map(q => ({
+    ...q,
+    answers: shuffle(q.answers),
+  }));
+}
+
+/**
+ * Calculate points for a correct answer.
+ * BASE = 100, multiplied by combo multiplier, plus time bonus.
+ * @param {number} timeLeft   — seconds remaining when answered
+ * @param {number} multiplier — current combo multiplier
+ * @returns {number}
+ */
+function calcPoints(timeLeft, multiplier) {
+  const base      = 100;
+  const timeBonus = state.timerEnabled ? Math.floor(timeLeft / 3) * 10 : 0;
+  return base * multiplier + timeBonus;
+}
+
+/**
+ * Determine combo multiplier from streak.
+ * ×1 default, ×2 at 3+, ×3 at 5+, ×4 at 8+
+ * @param {number} streak
+ * @returns {number}
+ */
+function streakToMultiplier(streak) {
+  if (streak >= 8) return 4;
+  if (streak >= 5) return 3;
+  if (streak >= 3) return 2;
+  return 1;
+}
+
+
+/* ─────────────────────────────────────────────
+   WEB AUDIO API — synthesized sound effects
+   (no external audio files needed)
+   ───────────────────────────────────────────── */
+
+/** Lazily create AudioContext on first use (browser autoplay policy) */
+function getAudioCtx() {
+  if (!state.audioCtx) {
+    state.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  return state.audioCtx;
+}
+
+/**
+ * Play a synthesized tone.
+ * @param {number} freq       — Hz
+ * @param {number} duration   — seconds
+ * @param {'sine'|'square'|'sawtooth'|'triangle'} type
+ * @param {number} [vol=0.25]
+ */
+function playTone(freq, duration, type = "sine", vol = 0.25) {
+  if (!state.soundEnabled) return;
+  try {
+    const ctx  = getAudioCtx();
+    const osc  = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.type            = type;
+    osc.frequency.value = freq;
+    gain.gain.setValueAtTime(vol, ctx.currentTime);
+    gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + duration);
+    osc.start();
+    osc.stop(ctx.currentTime + duration);
+  } catch (_) { /* silently ignore AudioContext errors */ }
+}
+
+const sfx = {
+  correct:  () => playTone(660, 0.18, "sine",   0.28),
+  wrong:    () => { playTone(180, 0.25, "square", 0.2); },
+  combo:    () => { playTone(880, 0.12, "sine",   0.25); setTimeout(() => playTone(1100, 0.15, "sine", 0.2), 100); },
+  timeout:  () => playTone(150, 0.4, "sawtooth", 0.18),
+  start:    () => { playTone(440, 0.1, "sine", 0.2); setTimeout(() => playTone(550, 0.1, "sine", 0.2), 120); setTimeout(() => playTone(660, 0.15, "sine", 0.2), 240); },
+  newBest:  () => { [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => playTone(f, 0.18, "sine", 0.22), i * 110)); },
+};
+
+
+/* ─────────────────────────────────────────────
+   5. SCREEN MANAGER
+   ───────────────────────────────────────────── */
+
+const allScreens = document.querySelectorAll(".screen");
+
+/** Hide all screens and show the one with the given id */
+function showScreen(id) {
+  allScreens.forEach(s => s.classList.remove("active"));
+  document.getElementById(id).classList.add("active");
+}
+
+
+/* ─────────────────────────────────────────────
+   6. RENDER LAYER
+   ───────────────────────────────────────────── */
+
+/** Update the HUD score, question counter, and combo badge */
+function renderHUD() {
+  document.getElementById("score").textContent           = state.score;
+  document.getElementById("current-question").textContent = state.currentIndex + 1;
+  document.getElementById("total-questions").textContent  = state.questions.length;
+
+  const comboBlock   = document.getElementById("combo-block");
+  const comboDisplay = document.getElementById("combo-display");
+
+  if (state.multiplier > 1) {
+    comboBlock.style.display = "flex";
+    comboDisplay.textContent = `×${state.multiplier}`;
+  } else {
+    comboBlock.style.display = "none";
+  }
+}
+
+/** Update the progress bar width */
+function renderProgress() {
+  const pct = (state.currentIndex / state.questions.length) * 100;
+  document.getElementById("progress").style.width = pct + "%";
+}
+
+/**
+ * Render the timer bar fill and text.
+ * @param {number} timeLeft   — seconds remaining
+ * @param {number} totalTime  — initial time for this question
+ */
+function renderTimer(timeLeft, totalTime) {
+  const fillEl = document.getElementById("timer-fill");
+  const textEl = document.getElementById("timer-text");
+  const pct    = (timeLeft / totalTime) * 100;
+  fillEl.style.width = pct + "%";
+  textEl.textContent = timeLeft;
+  // Turn red when under 5 seconds
+  fillEl.classList.toggle("urgent", timeLeft <= 5);
+}
+
+/**
+ * Show the +BONUS floating text animation.
+ * @param {string} text — e.g. "+250"
+ */
+function showBonusFloat(text) {
+  const el = document.getElementById("bonus-float");
+  el.textContent = text;
+  el.classList.remove("pop");
+  // Force reflow to restart animation
+  void el.offsetWidth;
+  el.classList.add("pop");
+}
+
+/** Render the personal best on the start screen */
+function renderPersonalBest() {
+  const best = localStorage.getItem("quizBest");
+  const el   = document.getElementById("pb-score");
+  el.textContent = best ? best : "—";
+}
+
+
+/* ─────────────────────────────────────────────
+   7. GAME LOGIC
+   ───────────────────────────────────────────── */
+
+const TIMER_DURATION = 15; // seconds per question
+
+/** Called when Start button is pressed */
 function startQuiz() {
-  // reset vars
-  currentQuestionIndex = 0;
-  score = 0;
-  scoreSpan.textContent = 0;
+  const config = readConfig();
 
-  startScreen.classList.remove("active");
-  quizScreen.classList.add("active");
+  // Apply config to state
+  setState("timerEnabled",  config.timerEnabled);
+  setState("blindMode",     config.blindMode);
+  setState("soundEnabled",  config.soundEnabled);
 
+  // Reset all game state
+  setState("currentIndex",    0);
+  setState("score",           0);
+  setState("streak",          0);
+  setState("maxStreak",       0);
+  setState("multiplier",      1);
+  setState("maxMultiplier",   1);
+  setState("answersDisabled", false);
+  setState("timerInterval",   null);
+  setState("timeLeft",        TIMER_DURATION);
+  setState("totalTimeLeft",   0);
+  setState("lifelineUsed",    false);
+  setState("history",         []);
+
+  // Build the question set from the chosen category
+  const pool = config.category === "all"
+    ? allQuestions
+    : questionBank[config.category] ?? allQuestions;
+
+  setState("questions", buildQuiz(pool, config.difficulty, 10));
+
+  // Update static HUD values
+  document.getElementById("total-questions").textContent = state.questions.length;
+
+  // Show / hide timer bar based on config
+  document.getElementById("timer-bar-wrap").classList.toggle("hidden", !state.timerEnabled);
+
+  // Reset lifeline button
+  const lifelineBtn = document.getElementById("lifeline-btn");
+  lifelineBtn.disabled = false;
+  lifelineBtn.style.textDecoration = "";
+
+  sfx.start();
+  showScreen("quiz-screen");
   showQuestion();
 }
 
+/** Display the current question and its answer buttons */
 function showQuestion() {
-  // reset state
-  answersDisabled = false;
+  setState("answersDisabled", false);
+  clearTimer(); // safety: clear any running timer
 
-  const currentQuestion = quizQuestions[currentQuestionIndex];
+  const q = state.questions[state.currentIndex];
 
-  currentQuestionSpan.textContent = currentQuestionIndex + 1;
+  renderHUD();
+  renderProgress();
 
-  const progressPercent = (currentQuestionIndex / quizQuestions.length) * 100;
-  progressBar.style.width = progressPercent + "%";
+  // Difficulty tag
+  const tag = document.getElementById("question-difficulty-tag");
+  tag.textContent = q.difficulty.toUpperCase();
+  tag.className   = `question-difficulty-tag ${q.difficulty}`;
 
-  questionText.textContent = currentQuestion.question;
+  // Question text
+  document.getElementById("question-text").textContent = q.question;
 
-  answersContainer.innerHTML = "";
+  // Build answer buttons
+  const container = document.getElementById("answers-container");
+  container.innerHTML = "";
+  const keys = ["1", "2", "3", "4"];
 
-  currentQuestion.answers.forEach((answer) => {
-    const button = document.createElement("button");
-    button.textContent = answer.text;
-    button.classList.add("answer-btn");
+  q.answers.forEach((answer, idx) => {
+    const btn  = document.createElement("button");
+    btn.className         = "answer-btn";
+    btn.dataset.correct   = answer.correct;
+    btn.dataset.index     = idx;
+    btn.disabled          = false;
 
-    // what is dataset? it's a property of the button element that allows you to store custom data
-    button.dataset.correct = answer.correct;
+    // Keyboard key badge
+    const keySpan         = document.createElement("span");
+    keySpan.className     = "answer-key";
+    keySpan.textContent   = keys[idx];
 
-    button.addEventListener("click", selectAnswer);
+    const textSpan        = document.createElement("span");
+    textSpan.textContent  = answer.text;
 
-    answersContainer.appendChild(button);
+    btn.appendChild(keySpan);
+    btn.appendChild(textSpan);
+    container.appendChild(btn);
   });
+
+  // Start timer if enabled
+  if (state.timerEnabled) {
+    setState("timeLeft", TIMER_DURATION);
+    renderTimer(TIMER_DURATION, TIMER_DURATION);
+    startTimer();
+  }
 }
 
-function selectAnswer(event) {
-  // optimization check
-  if (answersDisabled) return;
+/** Start the countdown timer for the current question */
+function startTimer() {
+  const interval = setInterval(() => {
+    const newTime = state.timeLeft - 1;
+    setState("timeLeft", newTime);
+    renderTimer(newTime, TIMER_DURATION);
 
-  answersDisabled = true;
+    if (newTime <= 0) {
+      clearInterval(interval);
+      setState("timerInterval", null);
+      handleTimeout();
+    }
+  }, 1000);
+  setState("timerInterval", interval);
+}
 
-  const selectedButton = event.target;
-  const isCorrect = selectedButton.dataset.correct === "true";
+/** Clear the running timer safely */
+function clearTimer() {
+  if (state.timerInterval) {
+    clearInterval(state.timerInterval);
+    setState("timerInterval", null);
+  }
+}
 
-  // Here Array.from() is used to convert the NodeList returned by answersContainer.children into an array, this is because the NodeList is not an array and we need to use the forEach method
-  Array.from(answersContainer.children).forEach((button) => {
-    if (button.dataset.correct === "true") {
-      button.classList.add("correct");
-    } else if (button === selectedButton) {
-      button.classList.add("incorrect");
+/** Called when timer hits 0 — auto-submit as wrong */
+function handleTimeout() {
+  sfx.timeout();
+  setState("answersDisabled", true);
+
+  const q = state.questions[state.currentIndex];
+  // Record in history as timed-out (no selected answer)
+  state.history.push({
+    question:     q.question,
+    selectedText: null,
+    correctText:  q.answers.find(a => a.correct).text,
+    wasCorrect:   false,
+    timedOut:     true,
+  });
+
+  // Break streak
+  setState("streak",     0);
+  setState("multiplier", 1);
+  renderHUD();
+
+  // Reveal correct answer (even in blind mode, show on timeout)
+  const buttons = document.querySelectorAll(".answer-btn");
+  buttons.forEach(btn => {
+    btn.disabled = true;
+    if (btn.dataset.correct === "true") btn.classList.add("correct");
+  });
+
+  // Advance after delay
+  setTimeout(advanceQuestion, 1200);
+}
+
+/** Event handler for answer button clicks (uses event delegation) */
+function handleAnswerClick(e) {
+  const btn = e.target.closest(".answer-btn");
+  if (!btn || state.answersDisabled) return;
+
+  clearTimer();
+  setState("answersDisabled", true);
+
+  const isCorrect = btn.dataset.correct === "true";
+  const q         = state.questions[state.currentIndex];
+
+  // Record history entry
+  state.history.push({
+    question:     q.question,
+    selectedText: btn.querySelector("span:last-child").textContent,
+    correctText:  q.answers.find(a => a.correct).text,
+    wasCorrect:   isCorrect,
+    timedOut:     false,
+  });
+
+  // Reveal correct/wrong (skip visual reveal in blind mode)
+  const allBtns = document.querySelectorAll(".answer-btn");
+  allBtns.forEach(b => {
+    b.disabled = true;
+    if (!state.blindMode) {
+      if (b.dataset.correct === "true") b.classList.add("correct");
+      else if (b === btn && !isCorrect) b.classList.add("incorrect");
     }
   });
 
   if (isCorrect) {
-    score++;
-    scoreSpan.textContent = score;
-  }
+    // Update streak and multiplier
+    const newStreak     = state.streak + 1;
+    const newMultiplier = streakToMultiplier(newStreak);
+    setState("streak",     newStreak);
+    setState("multiplier", newMultiplier);
+    if (newStreak > state.maxStreak)       setState("maxStreak",      newStreak);
+    if (newMultiplier > state.maxMultiplier) setState("maxMultiplier", newMultiplier);
 
-  setTimeout(() => {
-    currentQuestionIndex++;
+    // Calculate and add points
+    const points    = calcPoints(state.timeLeft, newMultiplier);
+    const newScore  = state.score + points;
+    setState("score", newScore);
 
-    // check if there are more questions or if the quiz is over
-    if (currentQuestionIndex < quizQuestions.length) {
-      showQuestion();
-    } else {
-      showResults();
-    }
-  }, 1000);
-}
+    // Accumulate time left for results screen
+    setState("totalTimeLeft", state.totalTimeLeft + state.timeLeft);
 
-function showResults() {
-  quizScreen.classList.remove("active");
-  resultScreen.classList.add("active");
+    // Feedback sounds
+    if (newMultiplier > state.multiplier || newStreak === 3) sfx.combo();
+    else sfx.correct();
 
-  finalScoreSpan.textContent = score;
-
-  const percentage = (score / quizQuestions.length) * 100;
-
-  if (percentage === 100) {
-    resultMessage.textContent = "Perfect! You're a genius!";
-  } else if (percentage >= 80) {
-    resultMessage.textContent = "Great job! You know your stuff!";
-  } else if (percentage >= 60) {
-    resultMessage.textContent = "Good effort! Keep learning!";
-  } else if (percentage >= 40) {
-    resultMessage.textContent = "Not bad! Try again to improve!";
+    // Show bonus float text
+    const bonusText = newMultiplier > 1
+      ? `+${points} ×${newMultiplier}`
+      : `+${points}`;
+    showBonusFloat(bonusText);
   } else {
-    resultMessage.textContent = "Keep studying! You'll get better!";
+    // Break streak
+    setState("streak",     0);
+    setState("multiplier", 1);
+    sfx.wrong();
+  }
+
+  renderHUD();
+  setTimeout(advanceQuestion, 1100);
+}
+
+/** Move to next question or results */
+function advanceQuestion() {
+  const nextIndex = state.currentIndex + 1;
+  setState("currentIndex", nextIndex);
+
+  if (nextIndex < state.questions.length) {
+    showQuestion();
+  } else {
+    showResults();
   }
 }
 
-function restartQuiz() {
-  resultScreen.classList.remove("active");
+/** Activate the 50/50 lifeline — eliminate 2 wrong answers */
+function useLifeline() {
+  if (state.lifelineUsed || state.answersDisabled) return;
+  setState("lifelineUsed", true);
 
-  startQuiz();
+  const lifelineBtn = document.getElementById("lifeline-btn");
+  lifelineBtn.disabled = true;
+
+  // Get all wrong-answer buttons
+  const wrongBtns = Array.from(
+    document.querySelectorAll(".answer-btn")
+  ).filter(btn => btn.dataset.correct === "false");
+
+  // Shuffle and eliminate 2 of them
+  shuffle(wrongBtns).slice(0, 2).forEach(btn => {
+    btn.classList.add("eliminated");
+    btn.disabled = true;
+  });
+
+  playTone(300, 0.15, "sine");
 }
+
+/** Display the results screen */
+function showResults() {
+  clearTimer(); // safety clear
+
+  const total = state.questions.length;
+
+  // Personal best check
+  const prevBest = parseInt(localStorage.getItem("quizBest") || "0");
+  if (state.score > prevBest) {
+    localStorage.setItem("quizBest", state.score);
+    document.getElementById("new-best-badge").style.display = "inline-block";
+    sfx.newBest();
+  } else {
+    document.getElementById("new-best-badge").style.display = "none";
+    sfx.start();
+  }
+
+  // Update personal best on start screen for next session
+  renderPersonalBest();
+
+  // Populate result screen elements
+  document.getElementById("final-score").textContent = state.score;
+  document.getElementById("max-score").textContent   = total;
+
+  document.getElementById("result-streak").textContent    = state.maxStreak;
+  document.getElementById("result-max-combo").textContent = `×${state.maxMultiplier}`;
+  document.getElementById("result-time").textContent      = state.timerEnabled
+    ? `${state.totalTimeLeft}s`
+    : "—";
+
+  // Result message based on raw correct count
+  const correctCount = state.history.filter(h => h.wasCorrect).length;
+  const pct          = (correctCount / total) * 100;
+  let msg;
+  if (pct === 100)     msg = "PERFECT! GENIUS!";
+  else if (pct >= 80)  msg = "GREAT WORK!";
+  else if (pct >= 60)  msg = "GOOD EFFORT!";
+  else if (pct >= 40)  msg = "NOT BAD!";
+  else                 msg = "KEEP GRINDING!";
+  document.getElementById("result-message").textContent = msg;
+
+  showScreen("result-screen");
+}
+
+/** Build and display the answer review screen */
+function showReviewScreen() {
+  const list = document.getElementById("review-list");
+  list.innerHTML = "";
+
+  state.history.forEach((entry, i) => {
+    const item = document.createElement("div");
+    item.className = `review-item ${entry.wasCorrect ? "was-correct" : "was-wrong"}`;
+
+    const qEl = document.createElement("div");
+    qEl.className   = "review-q";
+    qEl.textContent = `Q${i + 1}: ${entry.question}`;
+
+    const ansRow = document.createElement("div");
+    ansRow.className = "review-answer-row";
+
+    if (entry.timedOut) {
+      ansRow.innerHTML = `
+        <span class="review-label">YOUR ANSWER:</span>
+        <span class="review-timeout">TIMED OUT</span>
+        <span class="review-label" style="margin-left:8px">CORRECT:</span>
+        <span class="review-correct-ans">${entry.correctText}</span>
+      `;
+    } else if (entry.wasCorrect) {
+      ansRow.innerHTML = `
+        <span class="review-label">YOUR ANSWER:</span>
+        <span class="review-your-ans correct">${entry.selectedText} ✓</span>
+      `;
+    } else {
+      ansRow.innerHTML = `
+        <span class="review-label">YOUR ANSWER:</span>
+        <span class="review-your-ans wrong">${entry.selectedText} ✗</span>
+        <span class="review-label" style="margin-left:8px">CORRECT:</span>
+        <span class="review-correct-ans">${entry.correctText}</span>
+      `;
+    }
+
+    item.appendChild(qEl);
+    item.appendChild(ansRow);
+    list.appendChild(item);
+  });
+
+  showScreen("review-screen");
+}
+
+/** Restart — go back to start screen */
+function restartQuiz() {
+  clearTimer();
+  renderPersonalBest();
+  showScreen("start-screen");
+}
+
+
+/* ─────────────────────────────────────────────
+   8. KEYBOARD NAVIGATION
+   ───────────────────────────────────────────── */
+
+document.addEventListener("keydown", (e) => {
+  // Only active on quiz screen
+  if (!document.getElementById("quiz-screen").classList.contains("active")) return;
+  if (state.answersDisabled) return;
+
+  const keyMap = { "1": 0, "2": 1, "3": 2, "4": 3 };
+  const idx    = keyMap[e.key];
+  if (idx !== undefined) {
+    const btns = document.querySelectorAll(".answer-btn:not(:disabled)");
+    if (btns[idx]) btns[idx].click();
+  }
+});
+
+
+/* ─────────────────────────────────────────────
+   9. EVENT WIRING
+   ───────────────────────────────────────────── */
+
+// Start button
+document.getElementById("start-btn").addEventListener("click", startQuiz);
+
+// Answer selection — event delegation on the container
+document.getElementById("answers-container").addEventListener("click", handleAnswerClick);
+
+// Lifeline
+document.getElementById("lifeline-btn").addEventListener("click", useLifeline);
+
+// Result screen actions
+document.getElementById("review-btn").addEventListener("click", showReviewScreen);
+document.getElementById("restart-btn").addEventListener("click", restartQuiz);
+
+// Review → back to results
+document.getElementById("back-to-result-btn").addEventListener("click", () => showScreen("result-screen"));
+
+
+/* ─────────────────────────────────────────────
+   10. INIT — run on page load
+   ───────────────────────────────────────────── */
+
+// Show personal best if it exists
+renderPersonalBest();

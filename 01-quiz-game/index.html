@@ -3,48 +3,186 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Quiz Game</title>
+    <title>QUIZ ZONE</title>
+    <!-- Google Fonts: Bebas Neue for display, Barlow Condensed for body -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Barlow+Condensed:ital,wght@0,400;0,600;0,700;1,400&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
+    <!-- Striped background texture via CSS -->
     <div class="container">
+
+      <!-- ===== SCREEN 1: START ===== -->
       <div class="screen active" id="start-screen">
-        <h1>Quiz Time!</h1>
-        <p>Test your knowledge with these fun questions</p>
-        <button id="start-btn">Start Quiz</button>
-      </div>
+        <div class="start-badge">READY?</div>
+        <h1 class="start-title">QUIZ<br />ZONE</h1>
+        <p class="start-subtitle">Test your brain. Beat your best.</p>
 
-      <div class="screen" id="quiz-screen">
-        <div class="quiz-header">
-          <h2 id="question-text">Question goes here</h2>
-          <div class="quiz-info">
-            <p>
-              Question <span id="current-question">1</span> of <span id="total-questions">5</span>
-            </p>
+        <!-- Config: Category -->
+        <div class="config-block">
+          <label class="config-label" for="category-select">CATEGORY</label>
+          <select id="category-select" class="nb-select">
+            <option value="all">🎲 All Mix</option>
+            <option value="geography">🌍 Geography</option>
+            <option value="science">🔬 Science</option>
+            <option value="popCulture">🎬 Pop Culture</option>
+            <option value="tech">💻 Tech</option>
+          </select>
+        </div>
 
-            <p>Score: <span id="score">0</span></p>
+        <!-- Config: Difficulty -->
+        <div class="config-block">
+          <label class="config-label" for="difficulty-select">DIFFICULTY</label>
+          <select id="difficulty-select" class="nb-select">
+            <option value="all">ALL LEVELS</option>
+            <option value="easy">EASY (70/25/5)</option>
+            <option value="medium">MEDIUM (30/50/20)</option>
+            <option value="hard">HARD (10/30/60)</option>
+          </select>
+        </div>
+
+        <!-- Config: Toggles row -->
+        <div class="toggles-row">
+          <!-- Timer toggle -->
+          <div class="toggle-item">
+            <span class="toggle-label">TIMER</span>
+            <label class="nb-toggle">
+              <input type="checkbox" id="timer-toggle" checked />
+              <span class="toggle-track"></span>
+            </label>
+          </div>
+          <!-- Blind mode toggle -->
+          <div class="toggle-item">
+            <span class="toggle-label">BLIND</span>
+            <label class="nb-toggle">
+              <input type="checkbox" id="blind-toggle" />
+              <span class="toggle-track"></span>
+            </label>
+          </div>
+          <!-- Sound toggle -->
+          <div class="toggle-item">
+            <span class="toggle-label">SOUND</span>
+            <label class="nb-toggle">
+              <input type="checkbox" id="sound-toggle" checked />
+              <span class="toggle-track"></span>
+            </label>
           </div>
         </div>
 
-        <div id="answers-container" class="answers-container">
-          <!-- Answer buttons will be insterted here from our js code later at some point -->
+        <!-- Personal best display -->
+        <div class="personal-best" id="personal-best">
+          <span class="pb-label">PERSONAL BEST</span>
+          <span class="pb-score" id="pb-score">—</span>
         </div>
 
+        <button id="start-btn" class="nb-btn primary">START QUIZ</button>
+      </div>
+
+      <!-- ===== SCREEN 2: QUIZ ===== -->
+      <div class="screen" id="quiz-screen">
+
+        <!-- Top HUD bar -->
+        <div class="quiz-hud">
+          <div class="hud-block">
+            <span class="hud-label">QUESTION</span>
+            <span class="hud-value">
+              <span id="current-question">1</span>/<span id="total-questions">10</span>
+            </span>
+          </div>
+          <div class="hud-block" id="combo-block" style="display:none;">
+            <span class="hud-label">COMBO</span>
+            <span class="hud-value combo-value" id="combo-display">×1</span>
+          </div>
+          <div class="hud-block">
+            <span class="hud-label">SCORE</span>
+            <span class="hud-value" id="score">0</span>
+          </div>
+        </div>
+
+        <!-- Timer bar (sits above question) -->
+        <div class="timer-bar-wrap" id="timer-bar-wrap">
+          <div class="timer-bar" id="timer-bar">
+            <div class="timer-fill" id="timer-fill"></div>
+            <span class="timer-text" id="timer-text">15</span>
+          </div>
+        </div>
+
+        <!-- Question card -->
+        <div class="question-card" id="question-card">
+          <div class="question-difficulty-tag" id="question-difficulty-tag">EASY</div>
+          <h2 id="question-text">Question goes here</h2>
+          <!-- Keyboard hint -->
+          <div class="keyboard-hint">Press 1–4 to answer</div>
+        </div>
+
+        <!-- Answers -->
+        <div id="answers-container" class="answers-container"></div>
+
+        <!-- Lifeline row -->
+        <div class="lifeline-row">
+          <button class="nb-btn lifeline-btn" id="lifeline-btn" title="Remove 2 wrong answers">
+            50/50
+          </button>
+          <!-- Float label for bonus points -->
+          <div class="bonus-float" id="bonus-float"></div>
+        </div>
+
+        <!-- Progress bar -->
         <div class="progress-bar">
           <div id="progress" class="progress"></div>
         </div>
       </div>
 
+      <!-- ===== SCREEN 3: RESULT ===== -->
       <div id="result-screen" class="screen">
-        <h1>Quiz Results</h1>
-        <div class="result-info">
-          <p>You scored <span id="final-score">0</span> out of <span id="max-score">5</span></p>
+        <h2 class="result-header">RESULTS</h2>
 
-          <div id="result-message">Good job!</div>
+        <!-- Stamp -->
+        <div class="score-stamp" id="score-stamp">
+          <span id="final-score">0</span>/<span id="max-score">10</span>
         </div>
-        <button id="restart-btn">Restart Quiz</button>
+
+        <!-- New high score badge -->
+        <div class="new-best-badge" id="new-best-badge" style="display:none;">
+          🏆 NEW BEST!
+        </div>
+
+        <div id="result-message" class="result-message">GOOD JOB!</div>
+
+        <div class="result-stats">
+          <div class="stat-pill">
+            <span class="stat-pill-label">STREAK</span>
+            <span class="stat-pill-val" id="result-streak">0</span>
+          </div>
+          <div class="stat-pill">
+            <span class="stat-pill-label">MAX COMBO</span>
+            <span class="stat-pill-val" id="result-max-combo">×1</span>
+          </div>
+          <div class="stat-pill">
+            <span class="stat-pill-label">TIME LEFT</span>
+            <span class="stat-pill-val" id="result-time">—</span>
+          </div>
+        </div>
+
+        <div class="result-actions">
+          <button id="review-btn" class="nb-btn secondary">REVIEW ANSWERS</button>
+          <button id="restart-btn" class="nb-btn primary">PLAY AGAIN</button>
+        </div>
       </div>
-    </div>
+
+      <!-- ===== SCREEN 4: REVIEW ===== -->
+      <div id="review-screen" class="screen">
+        <h2 class="result-header">ANSWER REVIEW</h2>
+        <div id="review-list" class="review-list"></div>
+        <button id="back-to-result-btn" class="nb-btn primary">BACK</button>
+      </div>
+
+    </div><!-- end .container -->
 
     <script src="script.js"></script>
   </body>
