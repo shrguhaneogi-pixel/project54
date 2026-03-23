@@ -4,7 +4,6 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>QUIZ ZONE</title>
-    <!-- Google Fonts: Bebas Neue for display, Barlow Condensed for body -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -14,11 +13,29 @@
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
-    <!-- Striped background texture via CSS -->
     <div class="container">
 
       <!-- ===== SCREEN 1: START ===== -->
       <div class="screen active" id="start-screen">
+
+        <!-- Theme toggle: bulb-shaped dark/light switcher -->
+        <button class="theme-toggle" id="theme-toggle" title="Toggle Noir Mode" aria-label="Toggle dark/noir mode">
+          <span class="bulb-icon">
+            <!-- SVG bulb -->
+            <svg viewBox="0 0 32 40" xmlns="http://www.w3.org/2000/svg" class="bulb-svg">
+              <!-- bulb glass -->
+              <path class="bulb-glass" d="M16 2 C9 2 4 7.5 4 14 C4 18.5 6.5 22.5 10 25 L10 30 L22 30 L22 25 C25.5 22.5 28 18.5 28 14 C28 7.5 23 2 16 2Z"/>
+              <!-- filament -->
+              <path class="bulb-filament" d="M13 20 L13 17 L16 14 L19 17 L19 20" fill="none" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+              <!-- base segments -->
+              <rect class="bulb-base" x="10" y="30" width="12" height="3" rx="0"/>
+              <rect class="bulb-base" x="11" y="33" width="10" height="3" rx="0"/>
+              <rect class="bulb-base" x="12" y="36" width="8" height="2" rx="0"/>
+            </svg>
+          </span>
+          <span class="theme-toggle-label" id="theme-label">NOIR</span>
+        </button>
+
         <div class="start-badge">READY?</div>
         <h1 class="start-title">QUIZ<br />ZONE</h1>
         <p class="start-subtitle">Test your brain. Beat your best.</p>
@@ -46,9 +63,8 @@
           </select>
         </div>
 
-        <!-- Config: Toggles row -->
-        <div class="toggles-row">
-          <!-- Timer toggle -->
+        <!-- TIMER toggle (kept as standard toggle, below the icon controls) -->
+        <div class="timer-toggle-row">
           <div class="toggle-item">
             <span class="toggle-label">TIMER</span>
             <label class="nb-toggle">
@@ -56,22 +72,42 @@
               <span class="toggle-track"></span>
             </label>
           </div>
-          <!-- Blind mode toggle -->
-          <div class="toggle-item">
-            <span class="toggle-label">BLIND</span>
-            <label class="nb-toggle">
-              <input type="checkbox" id="blind-toggle" />
-              <span class="toggle-track"></span>
-            </label>
-          </div>
-          <!-- Sound toggle -->
-          <div class="toggle-item">
-            <span class="toggle-label">SOUND</span>
-            <label class="nb-toggle">
-              <input type="checkbox" id="sound-toggle" checked />
-              <span class="toggle-track"></span>
-            </label>
-          </div>
+        </div>
+
+        <!-- Floating icon controls: Sound + Blind -->
+        <div class="floating-controls-row">
+          <!-- Sound icon button -->
+          <button class="float-ctrl-btn" id="sound-ctrl" title="Toggle Sound" aria-label="Toggle sound" data-active="true">
+            <svg class="ctrl-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <!-- speaker body -->
+              <polygon points="3,9 3,15 7,15 13,20 13,4 7,9" class="icon-fill" stroke-linejoin="round"/>
+              <!-- sound waves (shown when active) -->
+              <g class="sound-waves">
+                <path d="M16 8.5 C17.5 10 17.5 14 16 15.5" fill="none" stroke-linecap="round" stroke-width="1.8"/>
+                <path d="M18.5 6 C21 8.5 21 15.5 18.5 18" fill="none" stroke-linecap="round" stroke-width="1.8"/>
+              </g>
+              <!-- mute X (shown when inactive) -->
+              <g class="mute-x" style="display:none;">
+                <line x1="16" y1="8" x2="22" y2="14" stroke-linecap="round" stroke-width="2"/>
+                <line x1="22" y1="8" x2="16" y2="14" stroke-linecap="round" stroke-width="2"/>
+              </g>
+            </svg>
+            <span class="float-ctrl-label">SFX</span>
+          </button>
+
+          <!-- Blind mode icon button -->
+          <button class="float-ctrl-btn" id="blind-ctrl" title="Toggle Blind Mode" aria-label="Toggle blind mode" data-active="false">
+            <svg class="ctrl-icon" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <!-- eye shape (shown when blind=OFF, eye visible) -->
+              <g class="eye-open">
+                <path d="M1 12 C4 6 8 3 12 3 C16 3 20 6 23 12 C20 18 16 21 12 21 C8 21 4 18 1 12Z" class="icon-stroke-only" fill="none" stroke-width="1.8"/>
+                <circle cx="12" cy="12" r="3.5" class="icon-fill"/>
+              </g>
+              <!-- slash line (shown when blind=ON) -->
+              <line class="blind-slash" x1="3" y1="3" x2="21" y2="21" stroke-linecap="round" stroke-width="2.2" style="display:none;"/>
+            </svg>
+            <span class="float-ctrl-label">BLIND</span>
+          </button>
         </div>
 
         <!-- Personal best display -->
@@ -104,11 +140,19 @@
           </div>
         </div>
 
-        <!-- Timer bar (sits above question) -->
-        <div class="timer-bar-wrap" id="timer-bar-wrap">
+        <!-- Arcade Combo Timer Bar -->
+        <div class="combo-timer-wrap" id="timer-bar-wrap">
+          <!-- Left: Combo multiplier tag -->
+          <div class="combo-tag" id="combo-tag">
+            <span class="combo-tag-text" id="combo-tag-text">COMBO : ×1.0</span>
+          </div>
+          <!-- Center: the fill bar -->
           <div class="timer-bar" id="timer-bar">
             <div class="timer-fill" id="timer-fill"></div>
-            <span class="timer-text" id="timer-text">15</span>
+          </div>
+          <!-- Right: Digital stopwatch -->
+          <div class="stopwatch" id="stopwatch">
+            <span class="stopwatch-val" id="stopwatch-val">15<span class="stopwatch-ms">.00</span></span>
           </div>
         </div>
 
@@ -116,7 +160,6 @@
         <div class="question-card" id="question-card">
           <div class="question-difficulty-tag" id="question-difficulty-tag">EASY</div>
           <h2 id="question-text">Question goes here</h2>
-          <!-- Keyboard hint -->
           <div class="keyboard-hint">Press 1–4 to answer</div>
         </div>
 
@@ -125,10 +168,18 @@
 
         <!-- Lifeline row -->
         <div class="lifeline-row">
-          <button class="nb-btn lifeline-btn" id="lifeline-btn" title="Remove 2 wrong answers">
-            50/50
+          <button class="nb-btn lifeline-btn" id="lifeline-btn" title="Remove 2 wrong answers — costs half max points">
+            <span class="lifeline-icon">½</span>
+            <span class="lifeline-text">50/50</span>
+            <!-- Cost indicator -->
+            <span class="lifeline-cost" id="lifeline-cost">
+              <svg viewBox="0 0 20 20" class="coin-icon">
+                <circle cx="10" cy="10" r="8" class="coin-body"/>
+                <text x="10" y="14" text-anchor="middle" class="coin-text">¢</text>
+              </svg>
+              <span>−50%</span>
+            </span>
           </button>
-          <!-- Float label for bonus points -->
           <div class="bonus-float" id="bonus-float"></div>
         </div>
 
@@ -142,9 +193,14 @@
       <div id="result-screen" class="screen">
         <h2 class="result-header">RESULTS</h2>
 
-        <!-- Stamp -->
-        <div class="score-stamp" id="score-stamp">
-          <span id="final-score">0</span>/<span id="max-score">10</span>
+        <!-- Raw score stamp — no /10 denominator -->
+        <div class="score-stamp-wrap">
+          <div class="score-stamp" id="score-stamp">
+            <span class="score-stamp-label">SCORE</span>
+            <span id="final-score">0</span>
+            <!-- Hidden max-score span for JS compatibility, not displayed -->
+            <span id="max-score" style="display:none;">10</span>
+          </div>
         </div>
 
         <!-- New high score badge -->
