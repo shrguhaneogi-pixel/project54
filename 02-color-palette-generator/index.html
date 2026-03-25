@@ -32,8 +32,8 @@
           <h1 class="app-title">Palette</h1>
         </div>
         <div class="header-right">
-          <!-- Gradient Mode Toggle -->
-          <div class="mode-toggle" title="Toggle gradient preview">
+          <!-- View Mode Toggle (Solid / Gradient) -->
+          <div class="mode-toggle" title="Toggle view">
             <button class="mode-btn active" id="mode-solid" data-mode="solid">
               <i class="fas fa-th-large"></i>
               <span>Solid</span>
@@ -43,6 +43,10 @@
               <span>Gradient</span>
             </button>
           </div>
+          <!-- Theme Toggle -->
+          <button class="icon-btn" id="theme-btn" title="Toggle dark mode">
+            <i class="fas fa-moon" id="theme-icon"></i>
+          </button>
           <!-- Share Button -->
           <button class="icon-btn" id="share-btn" title="Share palette (copy URL)">
             <i class="fas fa-link"></i>
@@ -52,7 +56,6 @@
 
       <!-- CONTROLS BAR -->
       <div class="controls-bar">
-        <!-- Harmony Mode Selector -->
         <div class="harmony-selector">
           <span class="controls-label">Harmony</span>
           <div class="harmony-pills">
@@ -63,8 +66,6 @@
             <button class="pill" data-harmony="split">Split-Comp</button>
           </div>
         </div>
-
-        <!-- Accessibility Toggle -->
         <div class="a11y-toggle-wrap">
           <label class="toggle-label" for="a11y-toggle">
             <i class="fas fa-eye"></i>
@@ -78,7 +79,7 @@
       </div>
 
       <!-- PALETTE AREA -->
-      <main class="palette-wrapper">
+      <main class="palette-wrapper" id="palette-wrapper">
 
         <!-- SOLID VIEW -->
         <div class="palette-container" id="palette-container">
@@ -100,13 +101,27 @@
 
       </main>
 
-      <!-- GENERATE BUTTON -->
+      <!-- GENERATE BUTTON + KEYBOARD HINTS -->
       <div class="generate-wrap">
         <button id="generate-btn">
           <i class="fas fa-sync-alt"></i>
           Generate Palette
           <span class="kbd-hint">Space</span>
         </button>
+      </div>
+
+      <!-- KEYBOARD SHORTCUT LEGEND -->
+      <div class="kbd-legend" id="kbd-legend">
+        <span class="kbd-item"><kbd>Space</kbd> Generate</span>
+        <span class="kbd-item"><kbd>←</kbd><kbd>→</kbd> Navigate</span>
+        <span class="kbd-item"><kbd>L</kbd> Lock</span>
+        <span class="kbd-item"><kbd>C</kbd> Copy</span>
+        <span class="kbd-item"><kbd>D</kbd> Dark mode</span>
+      </div>
+
+      <!-- DRAG DROP HINT (shown briefly on first use) -->
+      <div class="dnd-hint hidden" id="dnd-hint">
+        <i class="fas fa-arrows-alt"></i> Drag to reorder
       </div>
 
       <!-- TOAST -->
