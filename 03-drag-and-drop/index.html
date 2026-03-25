@@ -11,18 +11,22 @@
     <!-- Custom drag ghost (hidden, cloned into view on dragstart) -->
     <div class="drag-ghost" id="dragGhost" aria-hidden="true"></div>
 
+    <!-- Toast notification for constraint feedback & persistence events -->
+    <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+
     <div class="container">
       <h1>Kanban Board</h1>
 
       <div class="board" role="main">
 
-        <!-- LIST 1 -->
+        <!-- LIST 1: To Do — accepts cards from any column -->
         <div
           class="list"
           id="list1"
           role="region"
           aria-label="To Do column"
           data-label="To Do"
+          data-allowed-from="list1,list2,list3"
         >
           <div class="list-header">
             <h2>To Do</h2>
@@ -34,13 +38,14 @@
           </div>
         </div>
 
-        <!-- LIST 2 -->
+        <!-- LIST 2: In Progress — accepts cards from any column -->
         <div
           class="list"
           id="list2"
           role="region"
           aria-label="In Progress column"
           data-label="In Progress"
+          data-allowed-from="list1,list2,list3"
         >
           <div class="list-header">
             <h2>In Progress</h2>
@@ -51,13 +56,14 @@
           </div>
         </div>
 
-        <!-- LIST 3 -->
+        <!-- LIST 3: Done — accepts cards from any column -->
         <div
           class="list"
           id="list3"
           role="region"
           aria-label="Done column"
           data-label="Done"
+          data-allowed-from="list1,list2,list3"
         >
           <div class="list-header">
             <h2>Done</h2>
