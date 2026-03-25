@@ -14,6 +14,16 @@
     <!-- Toast notification for constraint feedback & persistence events -->
     <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
 
+    <!-- Screen-reader live region for keyboard drag announcements (Tier 3 A11Y) -->
+    <div id="a11yAnnounce" class="sr-only" role="log" aria-live="assertive" aria-atomic="true"></div>
+
+    <!-- Undo bar (Tier 3) -->
+    <div class="undo-bar" id="undoBar" aria-live="polite">
+      <span id="undoMsg">Card moved</span>
+      <span class="undo-sep"></span>
+      <button id="undoBtn" aria-label="Undo last card move">Undo</button>
+    </div>
+
     <div class="container">
       <h1>Kanban Board</h1>
 
