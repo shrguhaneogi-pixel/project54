@@ -1,19 +1,18 @@
 /**
  * PALETTE — Color Theory Generator
- * Tier 2 adds: Dark Mode · Drag & Drop · Full Keyboard Nav
- *              Touch Gestures · Micro-animations
+ * Tier 3 adds: Export (PNG/CSS/JSON) · Palette History + Undo
+ *              Color Detail Panel · HSL Fine-Tune Sliders · AI Color Naming
  *
  * Architecture carried forward:
  *   appState  — single source of truth
  *   syncState — localStorage + URL after every mutation
  *   render    — pure read from appState → DOM
+ *   panelOpen — runtime flag, gates keyboard shortcuts
  *
- * New state fields:
- *   theme: 'light' | 'dark'
- *
- * New coordination flags (not persisted):
- *   panelOpen  — gates keyboard shortcuts when a modal is open (Tier 3 ready)
- *   isDragging — suppresses hover-lift during drag
+ * New state fields: (none — Tier 3 features are runtime-only or use sessionStorage)
+ * New runtime state:
+ *   historyStack — array of past color arrays (session-scoped)
+ *   activePanel  — { index, hex } of currently open detail panel
  */
 
 'use strict';
@@ -23,31 +22,33 @@
    ───────────────────────────────────────────────────────── */
 
 const DEFAULT_STATE = {
-  colors:  ['#E1F5FE', '#B3E5FC', '#81D4FA', '#4FC3F7', '#29B6F6'],
-  locks:   [false, false, false, false, false],
-  harmony: 'analogous',
+  colors:   ['#E1F5FE', '#B3E5FC', '#81D4FA', '#4FC3F7', '#29B6F6'],
+  locks:    [false, false, false, false, false],
+  harmony:  'analogous',
   viewMode: 'solid',
-  a11yOn:  false,
-  theme:   'light',   // NEW — Tier 2
+  a11yOn:   false,
+  theme:    'light',
 };
 
 let appState = deepClone(DEFAULT_STATE);
 
-// Runtime-only flags — never persisted
-let panelOpen  = false;   // Tier 3 hook: set true when detail panel is open
-let isDragging = false;
-let kbFocusIdx = -1;      // which card has keyboard focus (-1 = none)
+// Runtime-only — never persisted to localStorage/URL
+let panelOpen    = false;
+let isDragging   = false;
+let kbFocusIdx   = -1;
+let activePanel  = null;   // { index, hex } when panel is open
+let historyStack = [];     // array of color arrays (max 20)
 
-function deepClone(obj) {
-  return JSON.parse(JSON.stringify(obj));
-}
+const HISTORY_MAX = 20;
+
+function deepClone(obj) { return JSON.parse(JSON.stringify(obj)); }
 
 /* ─────────────────────────────────────────────────────────
-   2.  HSL COLOR ENGINE  (unchanged from Tier 1)
+   2.  HSL COLOR ENGINE
    ───────────────────────────────────────────────────────── */
 
 function generateHarmoniousColors() {
-  const baseHue  = Math.floor(Math.random() * 360);
+  const baseHue   = Math.floor(Math.random() * 360);
   const newColors = buildHarmony(baseHue, appState.harmony);
   appState.colors = appState.colors.map((existing, i) =>
     appState.locks[i] ? existing : newColors[i]
@@ -103,12 +104,12 @@ function buildHarmony(h, mode) {
   }
 }
 
-function norm(h)        { return ((h % 360) + 360) % 360; }
-function satRand()      { return randBetween(45, 85); }
-function ligHigh()      { return randBetween(72, 88); }
-function ligMid()       { return randBetween(48, 68); }
-function ligLow()       { return randBetween(28, 48); }
-function ligRand()      { return [ligHigh, ligMid, ligLow][Math.floor(Math.random() * 3)](); }
+function norm(h)           { return ((h % 360) + 360) % 360; }
+function satRand()         { return randBetween(45, 85); }
+function ligHigh()         { return randBetween(72, 88); }
+function ligMid()          { return randBetween(48, 68); }
+function ligLow()          { return randBetween(28, 48); }
+function ligRand()         { return [ligHigh, ligMid, ligLow][Math.floor(Math.random() * 3)](); }
 function randBetween(a, b) { return Math.floor(Math.random() * (b - a + 1)) + a; }
 
 function hslToHex(h, s, l) {
@@ -150,7 +151,7 @@ function hexToRgb(hex) {
 }
 
 /* ─────────────────────────────────────────────────────────
-   3.  WCAG ENGINE  (unchanged from Tier 1)
+   3.  WCAG ENGINE
    ───────────────────────────────────────────────────────── */
 
 function relativeLuminance(hex) {
@@ -167,30 +168,87 @@ function contrastRatio(h1, h2) {
 function wcagRating(hex) {
   const vsWhite = contrastRatio(hex, '#FFFFFF');
   const vsBlack = contrastRatio(hex, '#000000');
-  const best = Math.max(vsWhite, vsBlack);
-  const level = best >= 7 ? 'AAA' : best >= 4.5 ? 'AA' : best >= 3 ? 'AA_large' : 'fail';
+  const best    = Math.max(vsWhite, vsBlack);
+  const level   = best >= 7 ? 'AAA' : best >= 4.5 ? 'AA' : best >= 3 ? 'AA_large' : 'fail';
   return { ratio: best.toFixed(2), level, vsWhite: vsWhite.toFixed(2), vsBlack: vsBlack.toFixed(2) };
 }
 
 /* ─────────────────────────────────────────────────────────
-   4.  STATE PERSISTENCE  (extended with theme)
+   4.  AI COLOR NAMING  (Upgrade 14)
+   ───────────────────────────────────────────────────────── */
+
+const COLOR_NAMES = {
+  // hue ranges → [adjectives, nouns]
+  red:    [['Crimson','Scarlet','Ruby','Rose','Blush','Brick','Garnet'],      ['Dusk','Ember','Dawn','Bloom','Heat','Flare','Poppy']],
+  orange: [['Amber','Copper','Rust','Terracotta','Harvest','Burnt','Clay'],   ['Haze','Glow','Mesa','Creek','Grove','Ridge','Sunset']],
+  yellow: [['Golden','Flaxen','Lemon','Straw','Honey','Mellow','Warm'],       ['Grain','Ray','Field','Shore','Noon','Light','Mist']],
+  lime:   [['Fresh','Spring','Lime','Chartreuse','Vivid','Crisp','Young'],    ['Meadow','Leaf','Canopy','Sprout','Moss','Fern','Petal']],
+  green:  [['Forest','Sage','Olive','Jade','Mint','Emerald','Deep'],          ['Pine','Glen','Hollow','Bayou','Trail','Knoll','Cove']],
+  teal:   [['Ocean','Teal','Aqua','Seafoam','Lagoon','Calm','Clear'],         ['Tide','Bay','Reef','Mist','Crest','Shore','Pool']],
+  blue:   [['Sky','Navy','Cobalt','Cerulean','Slate','Midnight','Steel'],     ['Wave','Drift','Veil','Haze','Abyss','Horizon','Vault']],
+  purple: [['Violet','Mauve','Plum','Lavender','Indigo','Royal','Deep'],      ['Dusk','Haze','Nebula','Vale','Bloom','Twilight','Reign']],
+  pink:   [['Blush','Rosy','Coral','Peach','Flamingo','Dusty','Soft'],        ['Petal','Bloom','Veil','Mist','Cloud','Blossom','Dawn']],
+};
+
+/**
+ * Maps hue (0–360) to a colour family name.
+ */
+function hueFamily(h) {
+  if (h < 15  || h >= 345) return 'red';
+  if (h < 45)  return 'orange';
+  if (h < 70)  return 'yellow';
+  if (h < 85)  return 'lime';
+  if (h < 165) return 'green';
+  if (h < 195) return 'teal';
+  if (h < 255) return 'blue';
+  if (h < 285) return 'purple';
+  if (h < 345) return 'pink';
+  return 'red';
+}
+
+/**
+ * Generates a two-word name for a hex colour.
+ * Deterministic: same hex → same name (uses hash for index selection).
+ */
+function colorName(hex) {
+  const { h, s, l } = hexToHsl(hex);
+  const family = hueFamily(h);
+  const [adjs, nouns] = COLOR_NAMES[family];
+
+  // Light colours get softer adjectives (last quarter of the list)
+  // Dark colours get deeper adjectives (first quarter)
+  // Use a simple hash for determinism
+  const hash = (hex.slice(1).split('').reduce((acc, c) => acc + c.charCodeAt(0), 0));
+
+  let adjIdx;
+  if (l >= 75)      adjIdx = (hash % 3) + 4;   // soft end
+  else if (l <= 35) adjIdx = hash % 3;           // deep end
+  else              adjIdx = (hash % 5) + 1;     // mid range
+
+  const nounIdx = (hash * 3) % nouns.length;
+
+  const adj  = adjs[adjIdx  % adjs.length];
+  const noun = nouns[nounIdx % nouns.length];
+  return `${adj} ${noun}`;
+}
+
+/* ─────────────────────────────────────────────────────────
+   5.  STATE PERSISTENCE
    ───────────────────────────────────────────────────────── */
 
 const STORAGE_KEY = 'palette_app_state';
 
 function syncState() {
-  // localStorage
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(appState)); } catch (e) {}
 
-  // URL
   const colors = appState.colors.map(c => c.replace('#', '')).join('-');
   const locks  = appState.locks.map(l => l ? '1' : '0').join('');
   const params = new URLSearchParams({
     colors, locks,
     mode:  appState.harmony,
     view:  appState.viewMode,
-    a11y:  appState.a11yOn ? '1' : '0',
-    theme: appState.theme,         // NEW
+    a11y:  appState.a11yOn  ? '1' : '0',
+    theme: appState.theme,
   });
   history.replaceState(null, '', `?${params.toString()}`);
 }
@@ -219,13 +277,11 @@ function loadState() {
 
     appState.a11yOn = params.get('a11y') === '1';
 
-    // Theme from URL
     const themeParam = params.get('theme');
     if (['light','dark'].includes(themeParam)) appState.theme = themeParam;
     return;
   }
 
-  // localStorage fallback
   try {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
@@ -236,11 +292,189 @@ function loadState() {
       }
     }
   } catch (e) {}
-  // Defaults remain
 }
 
 /* ─────────────────────────────────────────────────────────
-   5.  RENDER
+   6.  PALETTE HISTORY + UNDO  (Upgrade 12)
+   ───────────────────────────────────────────────────────── */
+
+/**
+ * Pushes the current palette onto the history stack before generating.
+ * Must be called BEFORE mutating appState.colors.
+ */
+function pushHistory() {
+  historyStack.push([...appState.colors]);
+  if (historyStack.length > HISTORY_MAX) historyStack.shift();
+  renderUndoBtn();
+}
+
+/**
+ * Pops the last palette from history and restores it.
+ */
+function undo() {
+  if (historyStack.length === 0) return;
+  appState.colors = historyStack.pop();
+  syncState();
+  render();
+  renderUndoBtn();
+  showToast('Undone');
+}
+
+function renderUndoBtn() {
+  const btn   = document.getElementById('undo-btn');
+  const hasBadge = btn.querySelector('.undo-count');
+  if (historyStack.length > 0) {
+    btn.classList.remove('hidden');
+    // Update or create badge
+    if (hasBadge) {
+      hasBadge.textContent = historyStack.length;
+    } else {
+      const badge = document.createElement('span');
+      badge.className = 'undo-count';
+      badge.textContent = historyStack.length;
+      btn.appendChild(badge);
+    }
+  } else {
+    btn.classList.add('hidden');
+    if (hasBadge) hasBadge.remove();
+  }
+}
+
+/* ─────────────────────────────────────────────────────────
+   7.  EXPORT SYSTEM  (Upgrade 11)
+   ───────────────────────────────────────────────────────── */
+
+/**
+ * Central serializer — shared foundation for Tier 4's Design System Generator (#17).
+ * format: 'png' | 'css' | 'json'
+ */
+function serializePalette(format) {
+  const colors = appState.colors;
+  const names  = colors.map(colorName);
+
+  switch (format) {
+
+    case 'css': {
+      const lines = colors.map((hex, i) => {
+        const { r, g, b } = hexToRgb(hex);
+        const { h, s, l } = hexToHsl(hex);
+        const varName = names[i].toLowerCase().replace(/\s+/g, '-');
+        return [
+          `  /* ${names[i]} */`,
+          `  --color-${i + 1}: ${hex};`,
+          `  --color-${i + 1}-rgb: ${r}, ${g}, ${b};`,
+          `  --color-${i + 1}-hsl: ${h}, ${s}%, ${l}%;`,
+          `  --color-${i + 1}-name: "${varName}";`,
+        ].join('\n');
+      });
+      return `:root {\n${lines.join('\n\n')}\n}`;
+    }
+
+    case 'json': {
+      const data = {
+        generated: new Date().toISOString(),
+        harmony: appState.harmony,
+        colors: colors.map((hex, i) => {
+          const { r, g, b } = hexToRgb(hex);
+          const { h, s, l } = hexToHsl(hex);
+          const wcag = wcagRating(hex);
+          return {
+            index: i,
+            name: names[i],
+            hex,
+            rgb: { r, g, b },
+            hsl: { h, s, l },
+            locked: appState.locks[i],
+            wcag: { ratio: wcag.ratio, level: wcag.level },
+          };
+        }),
+      };
+      return JSON.stringify(data, null, 2);
+    }
+
+    case 'png':
+      return null; // PNG is handled separately via Canvas
+
+    default:
+      return null;
+  }
+}
+
+/**
+ * Exports palette as a PNG using Canvas.
+ * Reads current theme for background colour.
+ */
+function exportPNG() {
+  const W = 1000, H = 300;
+  const colW = W / 5;
+  const canvas = document.createElement('canvas');
+  canvas.width = W; canvas.height = H;
+  const ctx = canvas.getContext('2d');
+
+  const isDark = appState.theme === 'dark';
+
+  appState.colors.forEach((hex, i) => {
+    const x = i * colW;
+
+    // Swatch
+    ctx.fillStyle = hex;
+    ctx.fillRect(x, 0, colW, H - 60);
+
+    // Info strip
+    ctx.fillStyle = isDark ? '#1c1c1a' : '#ffffff';
+    ctx.fillRect(x, H - 60, colW, 60);
+
+    // Hex label
+    ctx.fillStyle = isDark ? '#f0ede8' : '#1a1a1a';
+    ctx.font = '500 14px "DM Mono", monospace';
+    ctx.fillText(hex.toUpperCase(), x + 12, H - 36);
+
+    // Color name
+    ctx.fillStyle = isDark ? '#666660' : '#a0a0a0';
+    ctx.font = '400 11px "DM Sans", sans-serif';
+    ctx.fillText(colorName(hex), x + 12, H - 18);
+
+    // Thin divider between swatches
+    if (i > 0) {
+      ctx.fillStyle = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
+      ctx.fillRect(x, 0, 1, H);
+    }
+  });
+
+  // Subtle border on whole image
+  ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.08)';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(1, 1, W - 2, H - 2);
+
+  // Download
+  canvas.toBlob(blob => {
+    const url  = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href     = url;
+    link.download = `palette-${Date.now()}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, 'image/png');
+}
+
+/**
+ * Downloads a text file.
+ */
+function downloadText(content, filename) {
+  const blob = new Blob([content], { type: 'text/plain' });
+  const url  = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url; link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+}
+
+/* ─────────────────────────────────────────────────────────
+   8.  RENDER
    ───────────────────────────────────────────────────────── */
 
 function render(opts = {}) {
@@ -253,46 +487,46 @@ function render(opts = {}) {
   renderKbFocus();
 }
 
-/* ── 5a. Theme ── */
+/* ── 8a. Theme ── */
 function renderTheme() {
   document.documentElement.dataset.theme = appState.theme;
   const icon = document.getElementById('theme-icon');
   icon.className = appState.theme === 'dark' ? 'fas fa-sun' : 'fas fa-moon';
 }
 
-/* ── 5b. Solid palette ── */
+/* ── 8b. Solid palette ── */
 function renderPalette(opts = {}) {
-  const container = document.getElementById('palette-container');
-  const isFirstRender = container.children.length !== 5;
+  const container      = document.getElementById('palette-container');
+  const isFirstRender  = container.children.length !== 5;
 
   if (isFirstRender) {
     container.innerHTML = '';
     for (let i = 0; i < 5; i++) {
       const box = createColorBox(i);
-      box.style.setProperty('--i', i);  // stagger delay
+      box.style.setProperty('--i', i);
       container.appendChild(box);
     }
   }
 
   appState.colors.forEach((hex, i) => {
-    const box      = container.children[i];
-    const swatch   = box.querySelector('.color-swatch');
-    const hexEl    = box.querySelector('.hex-value');
-    const lockBtn  = box.querySelector('.lock-btn');
+    const box     = container.children[i];
+    const swatch  = box.querySelector('.color-swatch');
+    const hexEl   = box.querySelector('.hex-value');
+    const nameEl  = box.querySelector('.color-name');
+    const lockBtn = box.querySelector('.lock-btn');
 
-    // Suppress entrance animation on updates (not first load)
     if (!isFirstRender) box.classList.add('no-animate');
 
     swatch.style.backgroundColor = hex;
-    hexEl.textContent = hex.toUpperCase();
+    hexEl.textContent  = hex.toUpperCase();
+    nameEl.textContent = colorName(hex);   // AI name
 
     box.classList.toggle('locked', appState.locks[i]);
     lockBtn.querySelector('i').className = appState.locks[i] ? 'fas fa-lock' : 'fas fa-unlock';
 
-    // Lock animation on state change
     if (opts.lockAnim === i) {
       box.classList.remove('lock-anim');
-      void box.offsetWidth; // reflow to restart animation
+      void box.offsetWidth;
       box.classList.add('lock-anim');
     }
 
@@ -305,7 +539,7 @@ function createColorBox(index) {
   box.className = 'color-box';
   box.dataset.index = index;
   box.setAttribute('draggable', 'true');
-  box.setAttribute('tabindex', '-1');  // focusable but not in tab order (keyboard nav uses arrow keys)
+  box.setAttribute('tabindex', '-1');
 
   box.innerHTML = `
     <div class="color-swatch">
@@ -325,13 +559,13 @@ function createColorBox(index) {
           <i class="far fa-copy"></i>
         </button>
       </div>
+      <p class="color-name"></p>
       <div class="contrast-row">
         <span class="contrast-ratio"></span>
         <div class="contrast-chips"></div>
       </div>
     </div>
   `;
-
   return box;
 }
 
@@ -360,13 +594,13 @@ function updateWcagDisplay(box, a11y) {
 
 function chipClass(r) { return r >= 7 ? 'pass-aaa' : r >= 4.5 ? 'pass-aa' : 'fail'; }
 
-/* ── 5c. Gradient ── */
+/* ── 8c. Gradient ── */
 function renderGradient() {
-  const preview  = document.getElementById('gradient-preview');
-  const stopsEl  = document.getElementById('gradient-stops');
-  const cssCode  = document.getElementById('gradient-css-code');
-  const hexList  = appState.colors.join(', ');
-  const css      = `linear-gradient(90deg, ${hexList})`;
+  const preview = document.getElementById('gradient-preview');
+  const stopsEl = document.getElementById('gradient-stops');
+  const cssCode = document.getElementById('gradient-css-code');
+  const hexList = appState.colors.join(', ');
+  const css     = `linear-gradient(90deg, ${hexList})`;
 
   preview.style.background = css;
   stopsEl.innerHTML = appState.colors.map(hex => `
@@ -378,14 +612,14 @@ function renderGradient() {
   cssCode.textContent = `background: ${css};`;
 }
 
-/* ── 5d. Harmony pills ── */
+/* ── 8d. Harmony pills ── */
 function renderHarmonyPills() {
   document.querySelectorAll('.pill').forEach(p =>
     p.classList.toggle('active', p.dataset.harmony === appState.harmony)
   );
 }
 
-/* ── 5e. View mode ── */
+/* ── 8e. View mode ── */
 function renderViewMode() {
   const solid    = document.getElementById('palette-container');
   const gradient = document.getElementById('gradient-container');
@@ -398,27 +632,168 @@ function renderViewMode() {
   btnG.classList.toggle('active', !isSolid);
 }
 
-/* ── 5f. A11y toggle ── */
+/* ── 8f. A11y toggle ── */
 function renderA11yToggle() {
   document.getElementById('a11y-toggle').checked = appState.a11yOn;
 }
 
-/* ── 5g. Keyboard focus ring ── */
+/* ── 8g. Keyboard focus ── */
 function renderKbFocus() {
-  const boxes = document.querySelectorAll('.color-box');
-  boxes.forEach((box, i) => {
+  document.querySelectorAll('.color-box').forEach((box, i) => {
     box.classList.toggle('kb-focused', i === kbFocusIdx);
   });
 }
 
 /* ─────────────────────────────────────────────────────────
-   6.  EVENT HANDLERS
+   9.  COLOR DETAIL PANEL  (Upgrades 13 + 16)
+   ───────────────────────────────────────────────────────── */
+
+/**
+ * Opens the detail panel for color at `index`.
+ */
+function openPanel(index) {
+  activePanel = { index, hex: appState.colors[index] };
+  panelOpen   = true;
+
+  document.getElementById('panel-overlay').classList.remove('hidden');
+  document.body.style.overflow = 'hidden';  // prevent scroll behind overlay
+
+  renderPanel();
+}
+
+/**
+ * Closes the detail panel.
+ */
+function closePanel() {
+  panelOpen   = false;
+  activePanel = null;
+
+  document.getElementById('panel-overlay').classList.add('hidden');
+  document.body.style.overflow = '';
+}
+
+/**
+ * Renders all panel content from activePanel.hex.
+ */
+function renderPanel() {
+  if (!activePanel) return;
+  const { index, hex } = activePanel;
+  const { r, g, b }    = hexToRgb(hex);
+  const { h, s, l }    = hexToHsl(hex);
+  const compHex        = hslToHex(norm(h + 180), s, l);
+  const a11y           = wcagRating(hex);
+  const name           = colorName(hex);
+
+  // Header
+  document.getElementById('panel-swatch').style.backgroundColor = hex;
+  document.getElementById('panel-color-name').textContent = name;
+  document.getElementById('panel-hex').textContent = hex.toUpperCase();
+
+  // Values
+  document.getElementById('pv-hex-val').textContent = hex.toUpperCase();
+  document.getElementById('pv-rgb-val').textContent = `rgb(${r}, ${g}, ${b})`;
+  document.getElementById('pv-hsl-val').textContent = `hsl(${h}, ${s}%, ${l}%)`;
+
+  // Sliders
+  const slH = document.getElementById('sl-h');
+  const slS = document.getElementById('sl-s');
+  const slL = document.getElementById('sl-l');
+  slH.value = h;
+  slS.value = s;
+  slL.value = l;
+  document.getElementById('sl-h-val').textContent = `${h}°`;
+  document.getElementById('sl-s-val').textContent = `${s}%`;
+  document.getElementById('sl-l-val').textContent = `${l}%`;
+
+  // Update saturation slider track to show the actual hue
+  slS.style.setProperty('--slider-sat-bg',
+    `linear-gradient(to right, hsl(${h},0%,${l}%), hsl(${h},100%,${l}%))`
+  );
+  slS.style.background =
+    `linear-gradient(to right, hsl(${h},0%,${l}%), hsl(${h},100%,${l}%))`;
+
+  // Shades & tints — 7 stops from dark to light
+  const shadesEl = document.getElementById('panel-shades');
+  const stops = [15, 25, 35, 50, 65, 78, 88];
+  shadesEl.innerHTML = stops.map(lVal => {
+    const shadeHex = hslToHex(h, Math.max(s - 5, 20), lVal);
+    const isActive = Math.abs(lVal - l) < 8;
+    return `<div class="shade-swatch${isActive ? ' active-shade' : ''}"
+      style="background:${shadeHex}"
+      title="${shadeHex}"
+      data-hex="${shadeHex}">
+    </div>`;
+  }).join('');
+
+  // Complementary
+  document.getElementById('panel-comp-swatch').style.backgroundColor = compHex;
+  document.getElementById('panel-comp-hex').textContent = compHex.toUpperCase();
+
+  // WCAG detail
+  const wcagEl = document.getElementById('panel-wcag');
+  const vsW    = parseFloat(a11y.vsWhite), vsB = parseFloat(a11y.vsBlack);
+
+  wcagEl.innerHTML = `
+    <div class="wcag-row">
+      <span class="wcag-row-label">vs White</span>
+      <div class="wcag-row-right">
+        <span class="wcag-ratio">${vsW.toFixed(2)}:1</span>
+        <span class="wcag-badge-pill ${wcagPillClass(vsW)}">${wcagLevelLabel(vsW)}</span>
+      </div>
+    </div>
+    <div class="wcag-row">
+      <span class="wcag-row-label">vs Black</span>
+      <div class="wcag-row-right">
+        <span class="wcag-ratio">${vsB.toFixed(2)}:1</span>
+        <span class="wcag-badge-pill ${wcagPillClass(vsB)}">${wcagLevelLabel(vsB)}</span>
+      </div>
+    </div>
+    <div class="wcag-row">
+      <span class="wcag-row-label">Best pairing</span>
+      <div class="wcag-row-right">
+        <span class="wcag-ratio">${a11y.ratio}:1</span>
+        <span class="wcag-badge-pill ${wcagPillClass(parseFloat(a11y.ratio))}">${wcagLevelLabel(parseFloat(a11y.ratio))}</span>
+      </div>
+    </div>
+  `;
+}
+
+function wcagPillClass(ratio) {
+  return ratio >= 7 ? 'aaa' : ratio >= 4.5 ? 'aa' : 'fail';
+}
+
+function wcagLevelLabel(ratio) {
+  return ratio >= 7 ? 'AAA' : ratio >= 4.5 ? 'AA' : ratio >= 3 ? 'AA Large' : 'Fail';
+}
+
+/**
+ * Called by HSL sliders — updates the active color in appState and re-renders.
+ */
+function applySliderChange() {
+  if (!activePanel) return;
+  const h = parseInt(document.getElementById('sl-h').value, 10);
+  const s = parseInt(document.getElementById('sl-s').value, 10);
+  const l = parseInt(document.getElementById('sl-l').value, 10);
+
+  const newHex = hslToHex(h, s, l);
+  appState.colors[activePanel.index] = newHex;
+  activePanel.hex = newHex;
+
+  syncState();
+  renderPalette();
+  renderGradient();
+  renderPanel();  // refreshes all panel content with new hex
+}
+
+/* ─────────────────────────────────────────────────────────
+   10.  EVENT HANDLERS
    ───────────────────────────────────────────────────────── */
 
 /* ── Generate ── */
 document.getElementById('generate-btn').addEventListener('click', handleGenerate);
 
 function handleGenerate() {
+  pushHistory();                  // ← save before mutating
   generateHarmoniousColors();
   syncState();
   render();
@@ -462,10 +837,7 @@ document.getElementById('a11y-toggle').addEventListener('change', function () {
 document.getElementById('theme-btn').addEventListener('click', toggleTheme);
 
 function toggleTheme() {
-  const btn  = document.getElementById('theme-btn');
-  const icon = document.getElementById('theme-icon');
-
-  // Quick fade-rotate swap
+  const btn = document.getElementById('theme-btn');
   btn.classList.add('switching');
   setTimeout(() => {
     appState.theme = appState.theme === 'light' ? 'dark' : 'light';
@@ -473,11 +845,45 @@ function toggleTheme() {
     renderTheme();
     btn.classList.remove('switching');
   }, 200);
-
-  showToast(appState.theme === 'dark' ? 'Switching to light mode' : 'Switching to dark mode');
 }
 
-/* ── Palette container: lock, copy, swatch-click ── */
+/* ── Undo button ── */
+document.getElementById('undo-btn').addEventListener('click', undo);
+
+/* ── Export dropdown ── */
+document.getElementById('export-btn').addEventListener('click', e => {
+  e.stopPropagation();
+  const dropdown = document.getElementById('export-dropdown');
+  dropdown.classList.toggle('hidden');
+});
+
+document.querySelectorAll('.export-item').forEach(item => {
+  item.addEventListener('click', e => {
+    e.stopPropagation();
+    const format = item.dataset.format;
+    document.getElementById('export-dropdown').classList.add('hidden');
+
+    if (format === 'png') {
+      exportPNG();
+      showToast('Exporting PNG…');
+    } else if (format === 'css') {
+      downloadText(serializePalette('css'), `palette-${Date.now()}.css`);
+      showToast('CSS variables exported!');
+    } else if (format === 'json') {
+      downloadText(serializePalette('json'), `palette-${Date.now()}.json`);
+      showToast('JSON exported!');
+    }
+  });
+});
+
+// Close dropdown on outside click
+document.addEventListener('click', e => {
+  if (!document.getElementById('export-wrap').contains(e.target)) {
+    document.getElementById('export-dropdown').classList.add('hidden');
+  }
+});
+
+/* ── Palette container — lock, copy, swatch open panel ── */
 document.getElementById('palette-container').addEventListener('click', function (e) {
   if (panelOpen) return;
 
@@ -495,11 +901,12 @@ document.getElementById('palette-container').addEventListener('click', function 
     return;
   }
 
+  // Click on swatch → open detail panel (not copy — copy is the button only)
   const swatch = e.target.closest('.color-swatch');
   if (swatch) {
     const box = swatch.closest('.color-box');
     const idx = parseInt(box.dataset.index, 10);
-    copyToClipboard(appState.colors[idx], box.querySelector('.copy-btn'));
+    openPanel(idx);
   }
 });
 
@@ -510,7 +917,7 @@ function toggleLock(idx) {
   showToast(appState.locks[idx] ? 'Color locked 🔒' : 'Color unlocked');
 }
 
-/* ── Copy gradient CSS ── */
+/* ── Gradient CSS copy ── */
 document.getElementById('copy-css-btn').addEventListener('click', () => {
   const text = document.getElementById('gradient-css-code').textContent;
   navigator.clipboard.writeText(text).then(() => {
@@ -521,7 +928,7 @@ document.getElementById('copy-css-btn').addEventListener('click', () => {
   }).catch(() => {});
 });
 
-/* ── Share button ── */
+/* ── Share ── */
 document.getElementById('share-btn').addEventListener('click', () => {
   const url = window.location.href;
   navigator.clipboard.writeText(url)
@@ -537,26 +944,80 @@ document.getElementById('share-btn').addEventListener('click', () => {
     });
 });
 
-/* ─────────────────────────────────────────────────────────
-   7.  KEYBOARD SHORTCUTS  (Full — Tier 2 Upgrade 7)
-   ───────────────────────────────────────────────────────── */
+/* ── Detail Panel events ── */
 
-document.addEventListener('keydown', e => {
-  // Always respect panelOpen flag (Tier 3 readiness)
-  if (panelOpen) {
-    if (e.code === 'Escape') {
-      panelOpen = false; // Tier 3 will override this with its own close fn
-    }
+// Close button
+document.getElementById('panel-close').addEventListener('click', closePanel);
+
+// Click outside panel card
+document.getElementById('panel-overlay').addEventListener('click', function (e) {
+  if (e.target === this) closePanel();
+});
+
+// Copy value buttons inside panel
+document.getElementById('detail-panel').addEventListener('click', function (e) {
+  const copyBtn = e.target.closest('.pv-copy');
+  if (!copyBtn) return;
+
+  const field = copyBtn.dataset.field;
+  if (field && activePanel) {
+    const { r, g, b } = hexToRgb(activePanel.hex);
+    const { h, s, l } = hexToHsl(activePanel.hex);
+    const textMap = {
+      hex: activePanel.hex.toUpperCase(),
+      rgb: `rgb(${r}, ${g}, ${b})`,
+      hsl: `hsl(${h}, ${s}%, ${l}%)`,
+    };
+    const text = textMap[field] || activePanel.hex;
+    copyToClipboard(text, copyBtn);
     return;
   }
 
-  // Don't fire if user is typing
+  // Complementary copy
+  if (copyBtn.id === 'panel-comp-copy' && activePanel) {
+    const { h, s, l } = hexToHsl(activePanel.hex);
+    const compHex = hslToHex(norm(h + 180), s, l);
+    copyToClipboard(compHex.toUpperCase(), copyBtn);
+  }
+});
+
+// Shade swatch click → apply to palette slot
+document.getElementById('panel-shades').addEventListener('click', function (e) {
+  const swatch = e.target.closest('.shade-swatch');
+  if (!swatch || !activePanel) return;
+  const newHex = swatch.dataset.hex;
+  appState.colors[activePanel.index] = newHex;
+  activePanel.hex = newHex;
+  syncState();
+  renderPalette();
+  renderGradient();
+  renderPanel();
+  showToast(`Applied ${newHex}`);
+});
+
+// HSL sliders — live update
+['sl-h', 'sl-s', 'sl-l'].forEach(id => {
+  document.getElementById(id).addEventListener('input', function () {
+    // Update displayed value label immediately for responsiveness
+    const label = document.getElementById(`${id}-val`);
+    label.textContent = id === 'sl-h' ? `${this.value}°` : `${this.value}%`;
+    applySliderChange();
+  });
+});
+
+/* ─────────────────────────────────────────────────────────
+   11.  KEYBOARD SHORTCUTS
+   ───────────────────────────────────────────────────────── */
+
+document.addEventListener('keydown', e => {
+  if (panelOpen) {
+    if (e.code === 'Escape') closePanel();
+    return;
+  }
+
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
-  // Reveal legend on first keypress
   document.body.classList.add('kb-active');
-
-  const boxes = document.querySelectorAll('.color-box');
 
   switch (e.code) {
 
@@ -568,7 +1029,7 @@ document.addEventListener('keydown', e => {
     case 'ArrowRight':
       e.preventDefault();
       kbFocusIdx = Math.min(kbFocusIdx + 1, 4);
-      if (kbFocusIdx === -1) kbFocusIdx = 0;
+      if (kbFocusIdx < 0) kbFocusIdx = 0;
       renderKbFocus();
       break;
 
@@ -584,19 +1045,29 @@ document.addEventListener('keydown', e => {
       renderKbFocus();
       break;
 
-    case 'KeyL':
+    case 'Enter':
       if (kbFocusIdx >= 0) {
         e.preventDefault();
-        toggleLock(kbFocusIdx);
+        openPanel(kbFocusIdx);
       }
+      break;
+
+    case 'KeyL':
+      if (kbFocusIdx >= 0) { e.preventDefault(); toggleLock(kbFocusIdx); }
       break;
 
     case 'KeyC':
       if (kbFocusIdx >= 0) {
         e.preventDefault();
-        const btn = boxes[kbFocusIdx] && boxes[kbFocusIdx].querySelector('.copy-btn');
+        const boxes = document.querySelectorAll('.color-box');
+        const btn   = boxes[kbFocusIdx] && boxes[kbFocusIdx].querySelector('.copy-btn');
         copyToClipboard(appState.colors[kbFocusIdx], btn);
       }
+      break;
+
+    case 'KeyZ':
+      e.preventDefault();
+      undo();
       break;
 
     case 'KeyD':
@@ -607,16 +1078,11 @@ document.addEventListener('keydown', e => {
 });
 
 /* ─────────────────────────────────────────────────────────
-   8.  DRAG & DROP REORDERING  (Tier 2 Upgrade 8)
+   12.  DRAG & DROP
    ───────────────────────────────────────────────────────── */
 
 let dragSrcIdx = null;
 
-/**
- * Attach DnD listeners to a color-box element.
- * Called once per box on creation; no re-attachment needed because
- * we reuse the same DOM nodes and update them in-place.
- */
 function attachDragListeners(box) {
   box.addEventListener('dragstart', onDragStart);
   box.addEventListener('dragend',   onDragEnd);
@@ -626,37 +1092,23 @@ function attachDragListeners(box) {
 }
 
 function onDragStart(e) {
-  // Disable drag in gradient mode
   if (appState.viewMode === 'gradient') { e.preventDefault(); return; }
-
   dragSrcIdx = parseInt(this.dataset.index, 10);
   isDragging = true;
   document.body.classList.add('is-dragging');
-
   this.classList.add('drag-source');
-
-  // Ghost image: use the swatch color as a small square
   const ghost = document.createElement('div');
-  ghost.style.cssText = `
-    width:60px; height:60px; border-radius:8px;
-    background:${appState.colors[dragSrcIdx]};
-    position:fixed; top:-100px; left:-100px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.25);
-  `;
+  ghost.style.cssText = `width:60px;height:60px;border-radius:8px;background:${appState.colors[dragSrcIdx]};position:fixed;top:-100px;left:-100px;box-shadow:0 4px 12px rgba(0,0,0,0.25);`;
   document.body.appendChild(ghost);
   e.dataTransfer.setDragImage(ghost, 30, 30);
   setTimeout(() => document.body.removeChild(ghost), 0);
-
   e.dataTransfer.effectAllowed = 'move';
 }
 
 function onDragEnd() {
-  isDragging = false;
-  dragSrcIdx = null;
+  isDragging = false; dragSrcIdx = null;
   document.body.classList.remove('is-dragging');
-  document.querySelectorAll('.color-box').forEach(b => {
-    b.classList.remove('drag-source', 'drag-over');
-  });
+  document.querySelectorAll('.color-box').forEach(b => b.classList.remove('drag-source', 'drag-over'));
 }
 
 function onDragOver(e) {
@@ -670,9 +1122,7 @@ function onDragOver(e) {
   }
 }
 
-function onDragLeave() {
-  this.classList.remove('drag-over');
-}
+function onDragLeave() { this.classList.remove('drag-over'); }
 
 function onDrop(e) {
   if (appState.viewMode === 'gradient') return;
@@ -680,38 +1130,28 @@ function onDrop(e) {
   const targetIdx = parseInt(this.dataset.index, 10);
   if (dragSrcIdx === null || dragSrcIdx === targetIdx) return;
 
-  // Reorder colors and locks arrays
   const newColors = [...appState.colors];
   const newLocks  = [...appState.locks];
-
-  // Swap
   [newColors[dragSrcIdx], newColors[targetIdx]] = [newColors[targetIdx], newColors[dragSrcIdx]];
   [newLocks[dragSrcIdx],  newLocks[targetIdx]]  = [newLocks[targetIdx],  newLocks[dragSrcIdx]];
-
   appState.colors = newColors;
   appState.locks  = newLocks;
 
-  syncState();   // ← writes URL + localStorage with new order
+  syncState();
   renderPalette();
   renderGradient();
-
   showToast('Colors reordered');
 }
 
 /* ─────────────────────────────────────────────────────────
-   9.  TOUCH GESTURES  (Tier 2 Upgrade 9)
+   13.  TOUCH GESTURES
    ───────────────────────────────────────────────────────── */
 
 (function initTouchGestures() {
   const wrapper = document.getElementById('palette-wrapper');
-
-  // ── Swipe on palette-wrapper to generate ──
   let touchStartX = 0, touchStartY = 0, touchStartTime = 0;
-  const SWIPE_THRESHOLD = 60;   // px horizontal distance
-  const SWIPE_MAX_Y     = 80;   // max vertical drift (so vertical scroll isn't caught)
-  const SWIPE_MAX_TIME  = 400;  // ms
+  const SWIPE_THRESHOLD = 60, SWIPE_MAX_Y = 80, SWIPE_MAX_TIME = 400;
 
-  // Swipe indicator elements (created once)
   const leftIndicator  = createSwipeIndicator('left',  '←');
   const rightIndicator = createSwipeIndicator('right', '→');
   wrapper.appendChild(leftIndicator);
@@ -730,44 +1170,32 @@ function onDrop(e) {
   }
 
   wrapper.addEventListener('touchstart', e => {
-    touchStartX    = e.touches[0].clientX;
-    touchStartY    = e.touches[0].clientY;
+    touchStartX = e.touches[0].clientX;
+    touchStartY = e.touches[0].clientY;
     touchStartTime = Date.now();
   }, { passive: true });
 
   wrapper.addEventListener('touchend', e => {
+    if (panelOpen) return;
     const dx = e.changedTouches[0].clientX - touchStartX;
     const dy = e.changedTouches[0].clientY - touchStartY;
     const dt = Date.now() - touchStartTime;
-
-    const isHorizontalSwipe =
-      Math.abs(dx) > SWIPE_THRESHOLD &&
-      Math.abs(dy) < SWIPE_MAX_Y &&
-      dt < SWIPE_MAX_TIME;
-
-    if (isHorizontalSwipe) {
+    if (Math.abs(dx) > SWIPE_THRESHOLD && Math.abs(dy) < SWIPE_MAX_Y && dt < SWIPE_MAX_TIME) {
       flashIndicator(dx < 0 ? rightIndicator : leftIndicator);
       handleGenerate();
     }
   }, { passive: true });
 
-  // ── Tap-hold on a swatch to toggle lock ──
-  // Timer: < 300ms movement → regular tap, ≥ 300ms held without move → lock
-  let holdTimer   = null;
-  let holdTarget  = null;
-  let holdMoved   = false;
+  let holdTimer = null, holdTarget = null, holdMoved = false;
 
   wrapper.addEventListener('touchstart', e => {
     const swatch = e.target.closest('.color-swatch');
     if (!swatch) return;
-    holdMoved  = false;
-    holdTarget = swatch;
-
+    holdMoved = false; holdTarget = swatch;
     holdTimer = setTimeout(() => {
       if (!holdMoved && holdTarget) {
         const box = holdTarget.closest('.color-box');
         const idx = parseInt(box.dataset.index, 10);
-        // Visual feedback before locking
         holdTarget.classList.add('tap-hold');
         setTimeout(() => holdTarget.classList.remove('tap-hold'), 300);
         toggleLock(idx);
@@ -775,19 +1203,12 @@ function onDrop(e) {
     }, 300);
   }, { passive: true });
 
-  wrapper.addEventListener('touchmove', () => {
-    holdMoved = true;
-    clearTimeout(holdTimer);
-  }, { passive: true });
-
-  wrapper.addEventListener('touchend', () => {
-    clearTimeout(holdTimer);
-    holdTarget = null;
-  }, { passive: true });
+  wrapper.addEventListener('touchmove', () => { holdMoved = true; clearTimeout(holdTimer); }, { passive: true });
+  wrapper.addEventListener('touchend',  () => { clearTimeout(holdTimer); holdTarget = null; }, { passive: true });
 })();
 
 /* ─────────────────────────────────────────────────────────
-   10.  UTILITIES
+   14.  UTILITIES
    ───────────────────────────────────────────────────────── */
 
 function copyToClipboard(text, triggerEl) {
@@ -795,12 +1216,9 @@ function copyToClipboard(text, triggerEl) {
   navigator.clipboard.writeText(text).then(doSuccess).catch(() => {
     try {
       const el = document.createElement('input');
-      el.value = text;
-      document.body.appendChild(el);
-      el.select();
-      document.execCommand('copy');
-      document.body.removeChild(el);
-      doSuccess();
+      el.value = text; document.body.appendChild(el);
+      el.select(); document.execCommand('copy');
+      document.body.removeChild(el); doSuccess();
     } catch (_) {}
   });
 }
@@ -810,64 +1228,47 @@ function showCopySuccess(btn, text) {
   const icon = btn.querySelector('i');
   if (icon) icon.className = 'fas fa-check';
   btn.style.color = '#22c55e';
-
-  // Ripple animation
-  btn.classList.remove('copied');
-  void btn.offsetWidth;
-  btn.classList.add('copied');
-
+  btn.classList.remove('copied'); void btn.offsetWidth; btn.classList.add('copied');
   setTimeout(() => {
     if (icon) icon.className = 'far fa-copy';
-    btn.style.color = '';
-    btn.classList.remove('copied');
+    btn.style.color = ''; btn.classList.remove('copied');
   }, 1500);
-
   showToast(`${text} copied!`);
 }
 
 let toastTimer = null;
 function showToast(msg) {
   const toast = document.getElementById('toast');
-  toast.textContent = msg;
-  toast.classList.add('show');
+  toast.textContent = msg; toast.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => toast.classList.remove('show'), 2200);
 }
 
 /* ─────────────────────────────────────────────────────────
-   11.  POST-RENDER SETUP: attach DnD + DnD hint
+   15.  INIT
    ───────────────────────────────────────────────────────── */
 
-/**
- * After the palette-container's boxes are created, attach drag listeners.
- * We patch renderPalette to call this after first render.
- */
 function attachAllDragListeners() {
   document.querySelectorAll('.color-box').forEach(attachDragListeners);
 }
 
-// Show DnD hint once on first load (desktop only)
 function showDndHintOnce() {
-  const hint    = document.getElementById('dnd-hint');
-  const seen    = localStorage.getItem('palette_dnd_hint_seen');
+  const hint  = document.getElementById('dnd-hint');
+  const seen  = localStorage.getItem('palette_dnd_hint_seen');
   const isTouch = 'ontouchstart' in window;
   if (!seen && !isTouch) {
     hint.classList.remove('hidden');
     localStorage.setItem('palette_dnd_hint_seen', '1');
-    // Auto-hide after animation completes (3s)
     setTimeout(() => hint.classList.add('hidden'), 3100);
   }
 }
-
-/* ─────────────────────────────────────────────────────────
-   12.  INIT
-   ───────────────────────────────────────────────────────── */
 
 function init() {
   loadState();
   render();
   syncState();
   attachAllDragListeners();
+  renderUndoBtn();
   showDndHintOnce();
 }
 

@@ -18,10 +18,9 @@
   </head>
   <body>
 
-    <!-- ── APP SHELL ── -->
     <div class="app">
 
-      <!-- HEADER -->
+      <!-- ── HEADER ── -->
       <header class="header">
         <div class="header-left">
           <div class="logo-mark">
@@ -32,7 +31,7 @@
           <h1 class="app-title">Palette</h1>
         </div>
         <div class="header-right">
-          <!-- View Mode Toggle (Solid / Gradient) -->
+          <!-- View Mode Toggle -->
           <div class="mode-toggle" title="Toggle view">
             <button class="mode-btn active" id="mode-solid" data-mode="solid">
               <i class="fas fa-th-large"></i>
@@ -43,8 +42,33 @@
               <span>Gradient</span>
             </button>
           </div>
+          <!-- Undo Button (hidden until history exists) -->
+          <button class="icon-btn hidden" id="undo-btn" title="Undo last generation (Z)">
+            <i class="fas fa-undo"></i>
+          </button>
+          <!-- Export Button -->
+          <div class="export-wrap" id="export-wrap">
+            <button class="icon-btn" id="export-btn" title="Export palette">
+              <i class="fas fa-download"></i>
+            </button>
+            <!-- Export Dropdown -->
+            <div class="export-dropdown hidden" id="export-dropdown">
+              <button class="export-item" data-format="png">
+                <i class="fas fa-image"></i>
+                <span>Export as PNG</span>
+              </button>
+              <button class="export-item" data-format="css">
+                <i class="fas fa-code"></i>
+                <span>CSS Variables</span>
+              </button>
+              <button class="export-item" data-format="json">
+                <i class="fas fa-file-code"></i>
+                <span>JSON Data</span>
+              </button>
+            </div>
+          </div>
           <!-- Theme Toggle -->
-          <button class="icon-btn" id="theme-btn" title="Toggle dark mode">
+          <button class="icon-btn" id="theme-btn" title="Toggle dark mode (D)">
             <i class="fas fa-moon" id="theme-icon"></i>
           </button>
           <!-- Share Button -->
@@ -54,7 +78,7 @@
         </div>
       </header>
 
-      <!-- CONTROLS BAR -->
+      <!-- ── CONTROLS BAR ── -->
       <div class="controls-bar">
         <div class="harmony-selector">
           <span class="controls-label">Harmony</span>
@@ -78,14 +102,10 @@
         </div>
       </div>
 
-      <!-- PALETTE AREA -->
+      <!-- ── PALETTE AREA ── -->
       <main class="palette-wrapper" id="palette-wrapper">
-
         <!-- SOLID VIEW -->
-        <div class="palette-container" id="palette-container">
-          <!-- color boxes injected by JS -->
-        </div>
-
+        <div class="palette-container" id="palette-container"></div>
         <!-- GRADIENT VIEW -->
         <div class="gradient-container hidden" id="gradient-container">
           <div class="gradient-preview" id="gradient-preview"></div>
@@ -98,10 +118,9 @@
             </button>
           </div>
         </div>
-
       </main>
 
-      <!-- GENERATE BUTTON + KEYBOARD HINTS -->
+      <!-- ── GENERATE BUTTON ── -->
       <div class="generate-wrap">
         <button id="generate-btn">
           <i class="fas fa-sync-alt"></i>
@@ -110,24 +129,111 @@
         </button>
       </div>
 
-      <!-- KEYBOARD SHORTCUT LEGEND -->
+      <!-- ── KEYBOARD LEGEND ── -->
       <div class="kbd-legend" id="kbd-legend">
         <span class="kbd-item"><kbd>Space</kbd> Generate</span>
         <span class="kbd-item"><kbd>←</kbd><kbd>→</kbd> Navigate</span>
+        <span class="kbd-item"><kbd>Enter</kbd> Detail</span>
         <span class="kbd-item"><kbd>L</kbd> Lock</span>
         <span class="kbd-item"><kbd>C</kbd> Copy</span>
-        <span class="kbd-item"><kbd>D</kbd> Dark mode</span>
+        <span class="kbd-item"><kbd>Z</kbd> Undo</span>
+        <span class="kbd-item"><kbd>D</kbd> Dark</span>
       </div>
 
-      <!-- DRAG DROP HINT (shown briefly on first use) -->
+      <!-- ── DND HINT ── -->
       <div class="dnd-hint hidden" id="dnd-hint">
         <i class="fas fa-arrows-alt"></i> Drag to reorder
       </div>
 
-      <!-- TOAST -->
+      <!-- ── TOAST ── -->
       <div class="toast" id="toast"></div>
 
     </div><!-- /.app -->
+
+    <!-- ── COLOR DETAIL PANEL (outside .app so it overlays everything) ── -->
+    <div class="panel-overlay hidden" id="panel-overlay">
+      <div class="detail-panel" id="detail-panel" role="dialog" aria-modal="true" aria-label="Color details">
+
+        <!-- Panel Header -->
+        <div class="panel-header">
+          <div class="panel-swatch" id="panel-swatch"></div>
+          <div class="panel-title-block">
+            <p class="panel-color-name" id="panel-color-name"></p>
+            <p class="panel-hex" id="panel-hex"></p>
+          </div>
+          <button class="panel-close" id="panel-close" title="Close (Esc)">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+
+        <!-- Color Values -->
+        <div class="panel-section">
+          <p class="panel-section-label">Color values</p>
+          <div class="panel-values">
+            <div class="panel-value-item" id="pv-hex">
+              <span class="panel-value-label">HEX</span>
+              <span class="panel-value-code" id="pv-hex-val"></span>
+              <button class="pv-copy" data-field="hex"><i class="far fa-copy"></i></button>
+            </div>
+            <div class="panel-value-item" id="pv-rgb">
+              <span class="panel-value-label">RGB</span>
+              <span class="panel-value-code" id="pv-rgb-val"></span>
+              <button class="pv-copy" data-field="rgb"><i class="far fa-copy"></i></button>
+            </div>
+            <div class="panel-value-item" id="pv-hsl">
+              <span class="panel-value-label">HSL</span>
+              <span class="panel-value-code" id="pv-hsl-val"></span>
+              <button class="pv-copy" data-field="hsl"><i class="far fa-copy"></i></button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Fine-Tune Sliders (Upgrade 16 merged here) -->
+        <div class="panel-section">
+          <p class="panel-section-label">Fine-tune</p>
+          <div class="panel-sliders">
+            <div class="slider-row">
+              <label class="slider-label" for="sl-h">H</label>
+              <input type="range" id="sl-h" class="hsl-slider hue-slider"    min="0"   max="359" step="1" />
+              <span class="slider-val" id="sl-h-val"></span>
+            </div>
+            <div class="slider-row">
+              <label class="slider-label" for="sl-s">S</label>
+              <input type="range" id="sl-s" class="hsl-slider sat-slider"    min="0"   max="100" step="1" />
+              <span class="slider-val" id="sl-s-val">%</span>
+            </div>
+            <div class="slider-row">
+              <label class="slider-label" for="sl-l">L</label>
+              <input type="range" id="sl-l" class="hsl-slider lig-slider"    min="0"   max="100" step="1" />
+              <span class="slider-val" id="sl-l-val">%</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Shades & Tints -->
+        <div class="panel-section">
+          <p class="panel-section-label">Shades &amp; tints</p>
+          <div class="panel-shades" id="panel-shades"></div>
+        </div>
+
+        <!-- Complementary -->
+        <div class="panel-section">
+          <p class="panel-section-label">Complementary</p>
+          <div class="panel-comp-row">
+            <div class="panel-comp-swatch" id="panel-comp-swatch"></div>
+            <span class="panel-comp-hex" id="panel-comp-hex"></span>
+            <button class="pv-copy" id="panel-comp-copy"><i class="far fa-copy"></i></button>
+          </div>
+        </div>
+
+        <!-- WCAG Detail -->
+        <div class="panel-section">
+          <p class="panel-section-label">Accessibility</p>
+          <div class="panel-wcag" id="panel-wcag"></div>
+        </div>
+
+      </div>
+    </div>
 
     <script src="script.js"></script>
   </body>
