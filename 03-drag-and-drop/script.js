@@ -1,29 +1,46 @@
 /**
- * Kanban Board — Tier 3
+ * Kanban Board — Tier 4 (Final / Production)
  *
- * Built on Tier 1+2 (placeholder, sortable, multi-container, ghost,
- * DragManager, persistence, touch, constraints).
+ * Complete feature set across all tiers:
  *
- * Adds:
- *  1. Collision Detection  — getBoundingClientRect() overlap replaces
- *                            simple Y-midpoint; absorbed into DragManager
- *  2. Undo / Redo          — History stack; Ctrl+Z / Ctrl+Y; undo bar UI
- *  3. Physics settle       — spring animation after every drop (rAF-based,
- *                            visual layer only — never touches layout)
- *  4. Accessibility (A11Y) — Full keyboard drag: Space=pick-up, Arrow=move
- *                            between columns, Enter/Space=drop, Escape=cancel
- *                            Screen-reader announcements via aria-live region
+ *  Tier 1: Placeholder, sortable list, multi-container drag,
+ *          custom ghost, visual feedback micro-interactions
+ *  Tier 2: DragManager state engine, LocalStorage persistence,
+ *          mobile touch support, constraint system
+ *  Tier 3: Collision detection, Undo/Redo stack, Physics settle
+ *          animation, Accessibility keyboard drag + screen-reader
+ *  Tier 4: Component architecture (CardComponent, ListComponent),
+ *          Snap-to-grid slot overlay, Rich drag preview ghost
  *
- * Architecture notes:
- *  - Collision detection is a drop-in superset of getInsertReference().
- *    The method signature is identical; the rest of the system is unchanged.
- *  - History.push() is called inside DragManager.commitDrop() — one place,
- *    both mouse and touch paths get undo for free.
- *  - Physics runs in onDrop / onTouchEnd / keyboard drop after commitDrop().
- *    It adds/removes a CSS class; no inline styles, no rAF loops on idle.
- *  - Keyboard A11Y calls the same DragManager.commitDrop() as the pointer
- *    paths — zero duplication of move logic.
+ * Architecture:
+ *  All state flows through DragManager.
+ *  CardComponent / ListComponent are factory functions that
+ *  create DOM + wire all event listeners in one call.
+ *  All 15 upgrades coexist without interference.
  */
+
+
+/* ═══════════════════════════════════════════════════════════════
+   UTILITY
+   ═══════════════════════════════════════════════════════════════ */
+
+/** Monotonically increasing ID generator — collision-safe. */
+const uid = (() => {
+  let n = Date.now();
+  return (prefix = "item") => `${prefix}-${n++}`;
+})();
+
+/** Map data-color → hex accent for the rich ghost stripe. */
+const COLOR_MAP = {
+  purple: "#7c6fc2",
+  blue:   "#4a8fd4",
+  green:  "#3aaa6e",
+  amber:  "#d4920a",
+  coral:  "#d45a30",
+  teal:   "#1d9e75",
+};
+
+const DEFAULT_COLOR = "#5c6ac4"; // fallback = CSS --accent
 
 
 /* ═══════════════════════════════════════════════════════════════
@@ -31,42 +48,68 @@
    ═══════════════════════════════════════════════════════════════ */
 const History = {
 
-  past:   [],   // stack of snapshots before each move
-  future: [],   // stack of snapshots for redo
-
-  MAX: 50,      // cap memory use
+  past:  [],
+  future: [],
+  MAX:   50,
 
   /**
-   * Snapshot = { listId: [cardId, ...], ... } for every column.
-   * We snapshot the WHOLE board so undo is always consistent.
+   * Full board snapshot:
+   *  { listId: { label, color, allowedFrom, cards: [{ id, text }] } }
+   * Stores card TEXT so undo also restores dynamically created cards.
    */
   snapshot() {
     const snap = {};
     document.querySelectorAll(".list").forEach(list => {
-      snap[list.id] = [...list.querySelectorAll(".card")].map(c => c.id);
+      snap[list.id] = {
+        label:       list.dataset.label,
+        color:       list.dataset.color       || "",
+        allowedFrom: list.dataset.allowedFrom || "",
+        cards: [...list.querySelectorAll(".card")].map(c => ({
+          id:   c.id,
+          text: c.textContent.trim(),
+        })),
+      };
     });
     return snap;
   },
 
-  /** Call BEFORE a move is committed. */
   push(snapBefore) {
     this.past.push(snapBefore);
     if (this.past.length > this.MAX) this.past.shift();
-    this.future = []; // new action clears redo stack
+    this.future = [];
     UndoBar.update();
   },
 
   canUndo() { return this.past.length > 0; },
   canRedo() { return this.future.length > 0; },
 
-  /** Restore a snapshot to the DOM (moves card nodes, rebinds nothing — listeners stay). */
+  /**
+   * Restore a snapshot. Because dynamically created cards may not
+   * exist in the DOM yet, we create them if missing before moving.
+   */
   applySnapshot(snap) {
-    for (const [listId, cardIds] of Object.entries(snap)) {
-      const area = document.querySelector("#" + listId + " .cards-area");
+    for (const [listId, data] of Object.entries(snap)) {
+      let area = document.querySelector("#" + listId + " .cards-area");
+      if (!area) {
+        // List was added after snapshot — recreate it
+        ListComponent.create({
+          id:          listId,
+          label:       data.label,
+          color:       data.color,
+          allowedFrom: data.allowedFrom,
+          animate:     false,
+        });
+        area = document.querySelector("#" + listId + " .cards-area");
+      }
       if (!area) continue;
-      for (const cardId of cardIds) {
-        const card = document.getElementById(cardId);
-        if (card) area.appendChild(card);
+
+      for (const { id, text } of data.cards) {
+        let card = document.getElementById(id);
+        if (!card) {
+          // Card was added after snapshot — recreate it
+          card = CardComponent.create({ id, text, listId });
+        }
+        area.appendChild(card);
       }
     }
   },
@@ -100,13 +143,10 @@ const History = {
 
 
 /* ═══════════════════════════════════════════════════════════════
-   UNDO BAR  —  persistent UI widget for undo/redo
+   UNDO BAR
    ═══════════════════════════════════════════════════════════════ */
 const UndoBar = {
-  el:     null,
-  msgEl:  null,
-  btnEl:  null,
-  timer:  null,
+  el: null, msgEl: null, btnEl: null, timer: null,
 
   init() {
     this.el    = document.getElementById("undoBar");
@@ -115,7 +155,6 @@ const UndoBar = {
     this.btnEl.addEventListener("click", () => History.undo());
   },
 
-  /** Show the bar with a message, auto-hide after 4 s. */
   flash(msg = "Card moved") {
     if (!this.el) return;
     clearTimeout(this.timer);
@@ -124,7 +163,6 @@ const UndoBar = {
     this.timer = setTimeout(() => this.el.classList.remove("visible"), 4000);
   },
 
-  /** Keep undo button enabled state in sync. */
   update() {
     if (!this.btnEl) return;
     this.btnEl.disabled = !History.canUndo();
@@ -133,28 +171,23 @@ const UndoBar = {
 
 
 /* ═══════════════════════════════════════════════════════════════
-   A11Y  —  screen-reader announcements + keyboard drag engine
+   A11Y  —  screen-reader + keyboard drag engine
    ═══════════════════════════════════════════════════════════════ */
 const A11y = {
 
-  announceEl: null,
-
-  /* Keyboard drag state */
-  kbdCard:       null,   // card currently "picked up" by keyboard
-  kbdSourceList: null,   // list it came from (for cancel)
+  announceEl:    null,
+  kbdCard:       null,
+  kbdSourceList: null,
 
   init() {
     this.announceEl = document.getElementById("a11yAnnounce");
 
-    // Global keydown: Ctrl+Z / Ctrl+Y (undo/redo), Escape (cancel kbd drag)
     document.addEventListener("keydown", e => {
       if ((e.ctrlKey || e.metaKey) && e.key === "z" && !e.shiftKey) {
-        e.preventDefault();
-        History.undo();
+        e.preventDefault(); History.undo();
       }
       if ((e.ctrlKey || e.metaKey) && (e.key === "y" || (e.key === "z" && e.shiftKey))) {
-        e.preventDefault();
-        History.redo();
+        e.preventDefault(); History.redo();
       }
       if (e.key === "Escape" && this.kbdCard) {
         this.cancelKbd();
@@ -164,37 +197,27 @@ const A11y = {
 
   announce(msg) {
     if (!this.announceEl) return;
-    // Clear then set — guarantees screen reader fires even for repeated messages
     this.announceEl.textContent = "";
     requestAnimationFrame(() => { this.announceEl.textContent = msg; });
   },
-
-  /* ── Keyboard drag handlers (called from card keydown) ────── */
 
   onCardKeydown(e, card) {
     if (e.key === " " || e.key === "Enter") {
       e.preventDefault();
       if (this.kbdCard === card) {
-        // Second Space/Enter = drop in current column
-        this.dropKbd(card.closest(".list"));
+        this.dropKbd();
       } else {
         this.pickupKbd(card);
       }
     }
-
     if (!this.kbdCard) return;
-
     if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
       e.preventDefault();
       const lists = [...document.querySelectorAll(".list")];
-      const currentList = this.kbdCard.closest(".list");
-      const idx = lists.indexOf(currentList);
-      const next = e.key === "ArrowRight"
-        ? lists[idx + 1]
-        : lists[idx - 1];
+      const idx = lists.indexOf(this.kbdCard.closest(".list"));
+      const next = e.key === "ArrowRight" ? lists[idx + 1] : lists[idx - 1];
       if (next) this.moveKbdToList(next);
     }
-
     if (e.key === "ArrowUp" || e.key === "ArrowDown") {
       e.preventDefault();
       this.moveKbdWithinList(e.key === "ArrowUp" ? -1 : 1);
@@ -202,35 +225,28 @@ const A11y = {
   },
 
   pickupKbd(card) {
-    // Cancel any in-flight keyboard drag first
     if (this.kbdCard) this.cancelKbd();
-
     this.kbdCard       = card;
     this.kbdSourceList = card.closest(".list");
-
     card.classList.add("kbd-picked");
     card.setAttribute("aria-grabbed", "true");
-
-    // Highlight all valid target columns
     document.querySelectorAll(".list").forEach(list => {
       const allowed = list.dataset.allowedFrom;
-      const ok = !allowed || allowed.split(",").map(s=>s.trim())
+      const ok = !allowed || allowed.split(",").map(s => s.trim())
                               .includes(this.kbdSourceList.id);
       if (ok) list.classList.add("kbd-target");
     });
-
-    const colLabel = this.kbdSourceList.dataset.label || "current column";
+    const col = this.kbdSourceList.dataset.label || "column";
     this.announce(
-      `${card.textContent} picked up from ${colLabel}. ` +
-      `Use arrow keys to move between columns or within the list. ` +
-      `Press Space or Enter to drop, Escape to cancel.`
+      `${card.textContent.trim()} picked up from ${col}. ` +
+      `Arrow keys to navigate. Space or Enter to drop. Escape to cancel.`
     );
   },
 
   moveKbdToList(targetList) {
     if (!this.kbdCard) return;
     const allowed = targetList.dataset.allowedFrom;
-    const ok = !allowed || allowed.split(",").map(s=>s.trim())
+    const ok = !allowed || allowed.split(",").map(s => s.trim())
                             .includes(this.kbdSourceList.id);
     if (!ok) {
       this.announce(`Cannot move to ${targetList.dataset.label}.`);
@@ -246,29 +262,23 @@ const A11y = {
     const area  = this.kbdCard.closest(".cards-area");
     const cards = [...area.querySelectorAll(".card")];
     const idx   = cards.indexOf(this.kbdCard);
-    const target = direction === -1 ? cards[idx - 1] : cards[idx + 1];
+    const target = cards[idx + direction];
     if (!target) return;
-    if (direction === -1) {
-      area.insertBefore(this.kbdCard, target);
-    } else {
-      area.insertBefore(target, this.kbdCard);
-    }
+    direction === -1
+      ? area.insertBefore(this.kbdCard, target)
+      : area.insertBefore(target, this.kbdCard);
     this.kbdCard.focus();
     this.announce(`Reordered within ${this.kbdCard.closest(".list").dataset.label}.`);
   },
 
-  dropKbd(targetList) {
+  dropKbd() {
     if (!this.kbdCard) return;
-
-    // Capture references before clearKbdState() nulls them
     const card     = this.kbdCard;
     const colLabel = card.closest(".list").dataset.label || "column";
     const snap     = History.snapshot();
-
     History.push(snap);
-    this.clearKbdState();   // nulls this.kbdCard
-    Physics.settle(card);   // uses captured reference
-
+    this.clearKbdState();
+    Physics.settle(card);
     updateAllCounts();
     Storage.save();
     UndoBar.flash("Card moved  ·  Ctrl+Z to undo");
@@ -278,7 +288,6 @@ const A11y = {
   cancelKbd() {
     if (!this.kbdCard) return;
     const card = this.kbdCard;
-    // Restore card to its original column
     this.kbdSourceList.querySelector(".cards-area").appendChild(card);
     this.clearKbdState();
     card.focus();
@@ -300,20 +309,12 @@ const A11y = {
 
 /* ═══════════════════════════════════════════════════════════════
    PHYSICS  —  post-drop settle animation
-   Visual layer only. Adds/removes .settling CSS class.
-   CSS @keyframes does the spring; JS just triggers it.
    ═══════════════════════════════════════════════════════════════ */
 const Physics = {
-
-  /**
-   * Give a card a spring-settle animation after it lands.
-   * Safe to call from any drop path (mouse, touch, keyboard).
-   */
   settle(card) {
     if (!card) return;
     card.classList.remove("settling");
-    // Force reflow so re-adding the class re-triggers the animation
-    void card.offsetWidth;
+    void card.offsetWidth; // force reflow to re-trigger animation
     card.classList.add("settling");
     card.addEventListener("animationend", () => {
       card.classList.remove("settling");
@@ -323,28 +324,23 @@ const Physics = {
 
 
 /* ═══════════════════════════════════════════════════════════════
-   DRAG MANAGER  —  central state engine (extended for Tier 3)
+   DRAG MANAGER  —  central state engine
    ═══════════════════════════════════════════════════════════════ */
 const DragManager = {
 
-  /* ── State ─────────────────────────────────────────────────── */
   draggingEl:   null,
   sourceListId: null,
   placeholder:  null,
-
-  /* Touch-specific */
   touchClone:   null,
   touchOffsetX: 0,
   touchOffsetY: 0,
 
-  /* ── Constraint Check ──────────────────────────────────────── */
   isDropAllowed(targetList) {
     const allowed = targetList.dataset.allowedFrom;
     if (!allowed) return true;
     return allowed.split(",").map(s => s.trim()).includes(this.sourceListId);
   },
 
-  /* ── Placeholder ───────────────────────────────────────────── */
   createPlaceholder(height) {
     const ph = document.createElement("div");
     ph.classList.add("placeholder");
@@ -362,23 +358,16 @@ const DragManager = {
     this.placeholder = null;
   },
 
-  /**
-   * Collision detection — getBoundingClientRect() overlap.
-   * For each candidate card, we check if the cursor Y is above the card's
-   * vertical midpoint (same semantic as before, but using real rect data
-   * rather than a cached offsetTop calculation). This is the correct
-   * approach when cards have variable heights or margins.
-   */
+  /* Collision detection — midpoint overlap via getBoundingClientRect */
   getInsertReference(area, clientY) {
     const cards = [...area.querySelectorAll(
       ".card:not(.dragging):not(.touch-dragging)"
     )];
     for (const card of cards) {
       const rect = card.getBoundingClientRect();
-      // Midpoint collision: cursor above mid → insert before this card
       if (clientY < rect.top + rect.height / 2) return card;
     }
-    return null; // cursor is below all cards → append
+    return null;
   },
 
   movePlaceholderTo(area, clientY) {
@@ -388,50 +377,103 @@ const DragManager = {
     area.insertBefore(ph, this.getInsertReference(area, clientY));
   },
 
-  /* ── Commit Drop (Tier 3: snapshots history before moving) ── */
+  /* ── Snap-to-grid overlay ────────────────────────────────────
+     Activate the CSS grid guide on the target column's cards-area.
+     Only one area is active at a time.                           */
+  _activeSnapArea: null,
+
+  activateSnap(area) {
+    if (this._activeSnapArea === area) return;
+    this.deactivateSnap();
+    area.classList.add("snap-active");
+    this._activeSnapArea = area;
+  },
+
+  deactivateSnap() {
+    if (this._activeSnapArea) {
+      this._activeSnapArea.classList.remove("snap-active");
+      this._activeSnapArea = null;
+    }
+  },
+
+  /* commitDrop — snapshots history, then moves card */
   commitDrop(area) {
     if (!this.draggingEl) return null;
-
-    // Snapshot BEFORE the move for undo
     const snap = History.snapshot();
-
-    const ph = this.placeholder;
+    const ph   = this.placeholder;
     if (ph && ph.parentNode === area) {
       area.insertBefore(this.draggingEl, ph);
     } else {
       area.appendChild(this.draggingEl);
     }
     this.removePlaceholder();
-
-    // Push to history only if the card actually moved
     History.push(snap);
-
     return area.closest(".list");
   },
 
-  /* ── Reset ─────────────────────────────────────────────────── */
   reset() {
     this.draggingEl   = null;
     this.sourceListId = null;
     this.removePlaceholder();
+    this.deactivateSnap();
   },
 };
 
 
 /* ═══════════════════════════════════════════════════════════════
-   PERSISTENCE  —  LocalStorage layer (unchanged from Tier 2)
+   RICH DRAG GHOST  —  Tier 4 upgrade
+   Populates the structured #dragGhost with label, accent stripe,
+   and origin-column badge.
+   ═══════════════════════════════════════════════════════════════ */
+const Ghost = {
+  el:     null,
+  stripe: null,
+  label:  null,
+  origin: null,
+
+  init() {
+    this.el     = document.getElementById("dragGhost");
+    this.stripe = document.getElementById("ghostStripe");
+    this.label  = document.getElementById("ghostLabel");
+    this.origin = document.getElementById("ghostOrigin");
+  },
+
+  populate(card) {
+    const list  = card.closest(".list");
+    const color = list ? list.dataset.color : "";
+    const hex   = COLOR_MAP[color] || DEFAULT_COLOR;
+
+    this.stripe.style.background = hex;
+    this.label.textContent       = card.textContent.trim();
+    this.origin.textContent      = list ? (list.dataset.label || "") : "";
+    this.origin.style.color      = hex;
+
+    // Park off-screen so setDragImage can render it
+    this.el.style.top  = "-9999px";
+    this.el.style.left = "-9999px";
+    document.body.appendChild(this.el);
+  },
+
+  detach() {
+    if (this.el && this.el.parentNode) {
+      this.el.parentNode.removeChild(this.el);
+    }
+  },
+};
+
+
+/* ═══════════════════════════════════════════════════════════════
+   PERSISTENCE
    ═══════════════════════════════════════════════════════════════ */
 const Storage = {
 
-  KEY: "kanban_layout_v1",
+  KEY: "kanban_layout_v4",  // bumped — new snapshot format includes dynamic cards
 
   save() {
-    const layout = {};
-    document.querySelectorAll(".list").forEach(list => {
-      layout[list.id] = [...list.querySelectorAll(".card")].map(c => c.id);
-    });
+    // Use History.snapshot() format — includes card text for dynamic cards
+    const snap = History.snapshot();
     try {
-      localStorage.setItem(this.KEY, JSON.stringify(layout));
+      localStorage.setItem(this.KEY, JSON.stringify(snap));
     } catch (e) { /* quota / private browsing */ }
   },
 
@@ -439,14 +481,34 @@ const Storage = {
     let raw;
     try { raw = localStorage.getItem(this.KEY); } catch (e) { return false; }
     if (!raw) return false;
-    let layout;
-    try { layout = JSON.parse(raw); } catch (e) { return false; }
-    for (const [listId, cardIds] of Object.entries(layout)) {
+    let snap;
+    try { snap = JSON.parse(raw); } catch (e) { return false; }
+
+    // Determine which list IDs currently exist vs need to be created
+    for (const [listId, data] of Object.entries(snap)) {
+      const existingArea = document.querySelector("#" + listId + " .cards-area");
+
+      if (!existingArea) {
+        // Dynamic list was persisted — recreate it
+        ListComponent.create({
+          id:          listId,
+          label:       data.label,
+          color:       data.color,
+          allowedFrom: data.allowedFrom,
+          animate:     false,
+        });
+      }
+
       const area = document.querySelector("#" + listId + " .cards-area");
       if (!area) continue;
-      for (const cardId of cardIds) {
-        const card = document.getElementById(cardId);
-        if (card) area.appendChild(card);
+
+      for (const { id, text } of data.cards) {
+        let card = document.getElementById(id);
+        if (!card) {
+          // Dynamic card — recreate it
+          card = CardComponent.create({ id, text, listId, bind: false });
+        }
+        area.appendChild(card);
       }
     }
     return true;
@@ -455,7 +517,7 @@ const Storage = {
 
 
 /* ═══════════════════════════════════════════════════════════════
-   TOAST  —  (unchanged from Tier 2)
+   TOAST
    ═══════════════════════════════════════════════════════════════ */
 const Toast = {
   el: null, timer: null,
@@ -483,10 +545,210 @@ function updateAllCounts() {
 
 
 /* ═══════════════════════════════════════════════════════════════
+   CARD COMPONENT  —  factory + binding
+   ═══════════════════════════════════════════════════════════════ */
+const CardComponent = {
+
+  /**
+   * Create a card DOM element and optionally append it to a list.
+   * @param {object} opts
+   *   id      – card id (auto-generated if omitted)
+   *   text    – card label text
+   *   listId  – if provided, appends to that list's cards-area
+   *   bind    – whether to attach drag/touch/kbd listeners (default true)
+   *   animate – whether to add .card--new entrance animation (default true)
+   */
+  create({ id, text, listId, bind = true, animate = true } = {}) {
+    const cardId = id || uid("card");
+    const card   = document.createElement("div");
+
+    card.className   = "card";
+    card.id          = cardId;
+    card.draggable   = true;
+    card.tabIndex    = 0;
+    card.setAttribute("role",        "listitem");
+    card.setAttribute("aria-grabbed","false");
+    card.setAttribute("aria-label",  `${text}. Press Space to pick up.`);
+    card.setAttribute("data-kbd-hint","Space: pick up");
+    card.textContent = text;
+
+    if (bind)    bindCard(card);
+    if (animate) card.classList.add("card--new");
+
+    if (listId) {
+      const area = document.querySelector("#" + listId + " .cards-area");
+      if (area) area.appendChild(card);
+    }
+
+    return card;
+  },
+};
+
+
+/* ═══════════════════════════════════════════════════════════════
+   LIST COMPONENT  —  factory + binding
+   ═══════════════════════════════════════════════════════════════ */
+const ListComponent = {
+
+  _nextColorIdx: 0,
+  _colors:       ["purple", "blue", "green", "amber", "coral", "teal"],
+
+  /**
+   * Create a list (column) DOM element and insert it before the
+   * "Add column" button.
+   * @param {object} opts
+   *   id          – list id (auto-generated if omitted)
+   *   label       – column heading text
+   *   color       – accent color key (cycles through _colors if omitted)
+   *   allowedFrom – comma-separated list IDs allowed to drop here
+   *   animate     – entrance animation (default true)
+   */
+  create({ id, label, color, allowedFrom, animate = true } = {}) {
+    const listId = id    || uid("list");
+    const col    = color || this._colors[this._nextColorIdx++ % this._colors.length];
+    const allIds = allowedFrom || this._buildAllowedFrom(listId);
+
+    const list = document.createElement("div");
+    list.className = "list";
+    list.id        = listId;
+    list.setAttribute("role",             "region");
+    list.setAttribute("aria-label",       `${label} column`);
+    list.setAttribute("data-label",        label);
+    list.setAttribute("data-color",        col);
+    list.setAttribute("data-allowed-from", allIds);
+
+    list.innerHTML = `
+      <div class="list-header">
+        <h2>${this._escHtml(label)}</h2>
+        <span class="card-count" aria-live="polite">0</span>
+      </div>
+      <div class="cards-area"></div>
+      <button class="add-card-btn" data-list="${listId}" aria-label="Add card to ${this._escHtml(label)}">
+        <span aria-hidden="true">+</span> Add card
+      </button>
+    `;
+
+    if (animate) list.classList.add("list--new");
+
+    // Insert before the "Add column" button
+    const addBtn = document.getElementById("addListBtn");
+    addBtn.parentNode.insertBefore(list, addBtn);
+
+    // Bind the cards-area as a drop zone
+    bindArea(list.querySelector(".cards-area"));
+
+    // Bind the "Add card" button
+    bindAddCardBtn(list.querySelector(".add-card-btn"));
+
+    // Update existing columns' allowed-from to include the new list
+    this._updateAllowedFrom(listId);
+
+    return list;
+  },
+
+  /** Build a comma-separated allowedFrom string containing all existing list IDs + this one. */
+  _buildAllowedFrom(newId) {
+    const ids = [...document.querySelectorAll(".list")].map(l => l.id);
+    ids.push(newId);
+    return ids.join(",");
+  },
+
+  /** After a new list is created, patch all other lists' data-allowed-from to include it. */
+  _updateAllowedFrom(newId) {
+    document.querySelectorAll(".list").forEach(list => {
+      const current = (list.dataset.allowedFrom || "").split(",").map(s => s.trim());
+      if (!current.includes(newId)) {
+        current.push(newId);
+        list.dataset.allowedFrom = current.join(",");
+      }
+    });
+  },
+
+  _escHtml(str) {
+    return str.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  },
+};
+
+
+/* ═══════════════════════════════════════════════════════════════
+   CARD EDITOR  —  inline "Add card" UI
+   ═══════════════════════════════════════════════════════════════ */
+const CardEditor = {
+
+  el:         null,
+  inputEl:    null,
+  saveBtn:    null,
+  cancelBtn:  null,
+  targetList: null,  // list id we're adding to
+
+  init() {
+    this.el        = document.getElementById("cardEditor");
+    this.inputEl   = document.getElementById("cardEditorInput");
+    this.saveBtn   = document.getElementById("cardEditorSave");
+    this.cancelBtn = document.getElementById("cardEditorCancel");
+
+    this.saveBtn.addEventListener("click",   () => this.save());
+    this.cancelBtn.addEventListener("click", () => this.close());
+
+    this.inputEl.addEventListener("keydown", e => {
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); this.save(); }
+      if (e.key === "Escape") this.close();
+    });
+
+    this.inputEl.addEventListener("input", () => {
+      this.saveBtn.disabled = this.inputEl.value.trim().length === 0;
+    });
+  },
+
+  open(listId) {
+    this.targetList = listId;
+    this.inputEl.value = "";
+    this.saveBtn.disabled = true;
+
+    // Move the editor element into the target list, before the add-card button
+    const addBtn = document.querySelector(`[data-list="${listId}"].add-card-btn`);
+    if (addBtn) {
+      addBtn.parentNode.insertBefore(this.el, addBtn);
+    }
+
+    this.el.hidden = false;
+    requestAnimationFrame(() => this.inputEl.focus());
+  },
+
+  save() {
+    const text = this.inputEl.value.trim();
+    if (!text) return;
+
+    const snap = History.snapshot();
+    History.push(snap);
+
+    const card = CardComponent.create({
+      text,
+      listId:  this.targetList,
+      animate: true,
+    });
+
+    this.close();
+    updateAllCounts();
+    Storage.save();
+    UndoBar.flash("Card added  ·  Ctrl+Z to undo");
+
+    // Focus the new card
+    requestAnimationFrame(() => card.focus());
+  },
+
+  close() {
+    this.el.hidden = true;
+    this.targetList = null;
+    // Return editor element to body so it's not stuck in any list
+    document.body.appendChild(this.el);
+  },
+};
+
+
+/* ═══════════════════════════════════════════════════════════════
    MOUSE / HTML5 DRAG API
    ═══════════════════════════════════════════════════════════════ */
-const ghost = document.getElementById("dragGhost");
-
 function onDragStart(e) {
   const card = e.currentTarget;
   DragManager.draggingEl   = card;
@@ -495,11 +757,9 @@ function onDragStart(e) {
   e.dataTransfer.setData("text/plain", card.id);
   e.dataTransfer.effectAllowed = "move";
 
-  ghost.textContent = card.textContent;
-  ghost.style.top   = "-9999px";
-  ghost.style.left  = "-9999px";
-  document.body.appendChild(ghost);
-  e.dataTransfer.setDragImage(ghost, 20, 16);
+  // Rich ghost
+  Ghost.populate(card);
+  e.dataTransfer.setDragImage(Ghost.el, 24, 18);
 
   requestAnimationFrame(() => {
     card.classList.add("dragging");
@@ -511,7 +771,7 @@ function onDragEnd(e) {
   const card = e.currentTarget;
   card.classList.remove("dragging");
   card.setAttribute("aria-grabbed", "false");
-  if (ghost.parentNode) ghost.parentNode.removeChild(ghost);
+  Ghost.detach();
   document.querySelectorAll(".list").forEach(l => l.classList.remove("over", "rejected"));
   DragManager.reset();
   updateAllCounts();
@@ -521,12 +781,16 @@ function onDragOver(e) {
   e.preventDefault();
   const area       = e.currentTarget;
   const targetList = area.closest(".list");
+
   if (!DragManager.isDropAllowed(targetList)) {
     e.dataTransfer.dropEffect = "none";
+    DragManager.deactivateSnap();
     return;
   }
+
   e.dataTransfer.dropEffect = "move";
   DragManager.movePlaceholderTo(area, e.clientY);
+  DragManager.activateSnap(area);         // snap-to-grid overlay
 }
 
 function onDragEnter(e) {
@@ -546,6 +810,7 @@ function onDragLeave(e) {
   if (!targetList.contains(e.relatedTarget)) {
     targetList.classList.remove("over", "rejected");
     DragManager.removePlaceholder();
+    DragManager.deactivateSnap();
   }
 }
 
@@ -559,11 +824,13 @@ function onDrop(e) {
   if (!DragManager.isDropAllowed(targetList)) {
     Toast.show("⛔ Can't move here", "error");
     targetList.classList.remove("rejected");
+    DragManager.deactivateSnap();
     return;
   }
 
-  const card = DragManager.draggingEl; // capture before commitDrop clears it
+  const card = DragManager.draggingEl;
   DragManager.commitDrop(area);
+  DragManager.deactivateSnap();
   targetList.classList.remove("over");
 
   Physics.settle(card);
@@ -592,7 +859,7 @@ function onTouchStart(e) {
 
   const clone = document.createElement("div");
   clone.classList.add("touch-clone");
-  clone.textContent = card.textContent;
+  clone.textContent = card.textContent.trim();
   clone.style.width = rect.width + "px";
   clone.style.left  = (touch.clientX - DragManager.touchOffsetX) + "px";
   clone.style.top   = (touch.clientY - DragManager.touchOffsetY) + "px";
@@ -608,14 +875,14 @@ function onTouchMove(e) {
   const clone = DragManager.touchClone;
 
   if (clone) {
-    clone.style.left = (touch.clientX - DragManager.touchOffsetX) + "px";
-    clone.style.top  = (touch.clientY - DragManager.touchOffsetY) + "px";
+    clone.style.left    = (touch.clientX - DragManager.touchOffsetX) + "px";
+    clone.style.top     = (touch.clientY - DragManager.touchOffsetY) + "px";
     clone.style.display = "none";
   }
 
   const elBelow    = document.elementFromPoint(touch.clientX, touch.clientY);
   if (clone) clone.style.display = "";
-  if (!elBelow) { DragManager.removePlaceholder(); return; }
+  if (!elBelow) { DragManager.removePlaceholder(); DragManager.deactivateSnap(); return; }
 
   const area       = elBelow.closest(".cards-area");
   const targetList = elBelow.closest(".list");
@@ -626,12 +893,15 @@ function onTouchMove(e) {
     if (DragManager.isDropAllowed(targetList)) {
       targetList.classList.add("over");
       DragManager.movePlaceholderTo(area, touch.clientY);
+      DragManager.activateSnap(area);
     } else {
       targetList.classList.add("rejected");
       DragManager.removePlaceholder();
+      DragManager.deactivateSnap();
     }
   } else {
     DragManager.removePlaceholder();
+    DragManager.deactivateSnap();
   }
 }
 
@@ -670,23 +940,16 @@ function onTouchEnd(e) {
 
 
 /* ═══════════════════════════════════════════════════════════════
-   BINDING
+   BINDING HELPERS
    ═══════════════════════════════════════════════════════════════ */
 function bindCard(card) {
-  // Mouse
-  card.addEventListener("dragstart", onDragStart);
-  card.addEventListener("dragend",   onDragEnd);
-
-  // Touch
+  card.addEventListener("dragstart",  onDragStart);
+  card.addEventListener("dragend",    onDragEnd);
   card.addEventListener("touchstart", onTouchStart, { passive: true });
   card.addEventListener("touchmove",  onTouchMove,  { passive: false });
   card.addEventListener("touchend",   onTouchEnd,   { passive: true });
-
-  // Keyboard A11Y — Space/Enter to pick up / drop; Arrows to navigate
-  card.addEventListener("keydown", e => A11y.onCardKeydown(e, card));
-
-  // Hint text shown via CSS ::after when focused (data-kbd-hint attr)
-  card.setAttribute("data-kbd-hint", "Space: pick up");
+  card.addEventListener("keydown",    e => A11y.onCardKeydown(e, card));
+  card.setAttribute("data-kbd-hint",  "Space: pick up");
 }
 
 function bindArea(area) {
@@ -694,6 +957,13 @@ function bindArea(area) {
   area.addEventListener("dragenter", onDragEnter);
   area.addEventListener("dragleave", onDragLeave);
   area.addEventListener("drop",      onDrop);
+}
+
+function bindAddCardBtn(btn) {
+  btn.addEventListener("click", () => {
+    const listId = btn.dataset.list;
+    CardEditor.open(listId);
+  });
 }
 
 
@@ -704,11 +974,29 @@ function init() {
   Toast.init();
   UndoBar.init();
   A11y.init();
+  Ghost.init();
+  CardEditor.init();
 
+  // Restore persisted layout BEFORE binding so restored cards get listeners
   const restored = Storage.load();
 
+  // Bind all existing cards (including any restored)
   document.querySelectorAll(".card").forEach(bindCard);
+
+  // Bind all existing drop areas
   document.querySelectorAll(".cards-area").forEach(bindArea);
+
+  // Bind all existing "Add card" buttons
+  document.querySelectorAll(".add-card-btn").forEach(bindAddCardBtn);
+
+  // "Add column" button
+  document.getElementById("addListBtn").addEventListener("click", () => {
+    const label = prompt("Column name:");
+    if (!label || !label.trim()) return;
+    ListComponent.create({ label: label.trim() });
+    updateAllCounts();
+    Storage.save();
+  });
 
   updateAllCounts();
   UndoBar.update();

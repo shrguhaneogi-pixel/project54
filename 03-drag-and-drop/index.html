@@ -8,8 +8,12 @@
   </head>
   <body>
 
-    <!-- Custom drag ghost (hidden, cloned into view on dragstart) -->
-    <div class="drag-ghost" id="dragGhost" aria-hidden="true"></div>
+    <!-- Rich custom drag ghost (Tier 4: upgraded from plain-text to structured mini-card) -->
+    <div class="drag-ghost" id="dragGhost" aria-hidden="true">
+      <span class="drag-ghost__stripe" id="ghostStripe"></span>
+      <span class="drag-ghost__label"  id="ghostLabel"></span>
+      <span class="drag-ghost__origin" id="ghostOrigin"></span>
+    </div>
 
     <!-- Toast notification for constraint feedback & persistence events -->
     <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
@@ -27,7 +31,7 @@
     <div class="container">
       <h1>Kanban Board</h1>
 
-      <div class="board" role="main">
+      <div class="board" id="board" role="main">
 
         <!-- LIST 1: To Do — accepts cards from any column -->
         <div
@@ -36,6 +40,7 @@
           role="region"
           aria-label="To Do column"
           data-label="To Do"
+          data-color="purple"
           data-allowed-from="list1,list2,list3"
         >
           <div class="list-header">
@@ -46,6 +51,9 @@
             <div class="card" draggable="true" id="card1" role="listitem" tabindex="0" aria-grabbed="false" aria-label="Wash Dishes. Press Space to pick up.">Wash Dishes</div>
             <div class="card" draggable="true" id="card2" role="listitem" tabindex="0" aria-grabbed="false" aria-label="Buy Groceries. Press Space to pick up.">Buy Groceries</div>
           </div>
+          <button class="add-card-btn" data-list="list1" aria-label="Add card to To Do">
+            <span aria-hidden="true">+</span> Add card
+          </button>
         </div>
 
         <!-- LIST 2: In Progress — accepts cards from any column -->
@@ -55,6 +63,7 @@
           role="region"
           aria-label="In Progress column"
           data-label="In Progress"
+          data-color="blue"
           data-allowed-from="list1,list2,list3"
         >
           <div class="list-header">
@@ -64,6 +73,9 @@
           <div class="cards-area" id="area2">
             <div class="card" draggable="true" id="card3" role="listitem" tabindex="0" aria-grabbed="false" aria-label="Learn to code. Press Space to pick up.">Learn to code</div>
           </div>
+          <button class="add-card-btn" data-list="list2" aria-label="Add card to In Progress">
+            <span aria-hidden="true">+</span> Add card
+          </button>
         </div>
 
         <!-- LIST 3: Done — accepts cards from any column -->
@@ -73,6 +85,7 @@
           role="region"
           aria-label="Done column"
           data-label="Done"
+          data-color="green"
           data-allowed-from="list1,list2,list3"
         >
           <div class="list-header">
@@ -81,8 +94,35 @@
           </div>
           <div class="cards-area" id="area3">
           </div>
+          <button class="add-card-btn" data-list="list3" aria-label="Add card to Done">
+            <span aria-hidden="true">+</span> Add card
+          </button>
         </div>
 
+        <!-- Add column button (Tier 4: Component architecture) -->
+        <button class="add-list-btn" id="addListBtn" aria-label="Add new column">
+          <span class="add-list-icon" aria-hidden="true">+</span>
+          <span>Add column</span>
+        </button>
+
+      </div>
+    </div>
+
+    <!-- Inline card editor (Tier 4) -->
+    <div class="card-editor" id="cardEditor" aria-modal="true" role="dialog" aria-label="Add new card" hidden>
+      <div class="card-editor__inner">
+        <textarea
+          class="card-editor__input"
+          id="cardEditorInput"
+          placeholder="Card title…"
+          rows="2"
+          maxlength="120"
+          aria-label="Card title"
+        ></textarea>
+        <div class="card-editor__actions">
+          <button class="card-editor__save"   id="cardEditorSave">Add card</button>
+          <button class="card-editor__cancel" id="cardEditorCancel">Cancel</button>
+        </div>
       </div>
     </div>
 
